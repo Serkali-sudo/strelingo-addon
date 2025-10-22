@@ -3,12 +3,8 @@
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const { Buffer } = require('buffer');
-const chardet = require('chardet');
-const iconv = require('iconv-lite');
 const { put } = require('@vercel/blob');
 const { createClient } = require('@supabase/supabase-js');
-const { convert: convertWithSubtitleConverter } = require('subtitle-converter');
-const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
 
 const languageMap = {
@@ -101,8 +97,6 @@ function parseLangCode(lang) {
 
 // --- Helper Function to Fetch and Select Subtitle ---
 async function fetchAndSelectSubtitle(languageId, baseSearchParams, type, videoParams = {}) {
-    const supportedFormats = ['dfxp', 'scc', 'srt', 'ttml', 'vtt', 'ssa', 'ass', 'sub', 'sbv', 'smi', 'lrc', 'json'];
-    
     // Build the new API URL
     const imdbId = `tt${baseSearchParams.imdbid}`;
     let apiUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${imdbId}`;
@@ -154,20 +148,12 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type, videoP
                         // If response is not what we expect, treat it as no subtitles
                         return { subtitles: [] };
                     }
-                    const subtitles = res.data.subtitles.map((sub, idx) => {
-                        // Extract format from URL
-                        const lastDotIndex = sub.url.lastIndexOf('.');
-                        const extension = lastDotIndex > 0 ? sub.url.substring(lastDotIndex + 1).toLowerCase() : '';
-                        const format = supportedFormats.includes(extension) ? extension : 'srt';
-                        
-                        return {
-                            id: sub.id,
-                            url: sub.url,
-                            lang: sub.lang || 'jpn',
-                            format: format,
-                            downloads: res.data.subtitles.length - idx // Preserve order
-                        };
-                    });
+                    const subtitles = res.data.subtitles.map((sub, idx) => ({
+                        id: sub.id,
+                        url: sub.url,
+                        lang: sub.lang || 'jpn',
+                        downloads: res.data.subtitles.length - idx // Preserve order
+                    }));
                     return { subtitles };
                 }).catch(() => {
                     // If Buta no Subs fails, just return empty
@@ -211,21 +197,11 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type, videoP
 
         // Map to the desired return format
         const subtitleList = langSubs.map((sub, idx) => {
-            // Extract format from URL if not already set
-            let format = sub.format || 'srt';
-            if (!sub.format) {
-                const lastDotIndex = sub.url.lastIndexOf('.');
-                const extension = lastDotIndex > 0 ? sub.url.substring(lastDotIndex + 1).toLowerCase() : '';
-                if (supportedFormats.includes(extension)) {
-                    format = extension;
-                }
-            }
-            
             return {
                 id: sub.id,
-                url: sub.url,
+                url: sub.url, // Direct URL to SRT file
                 lang: sub.lang,
-                format: format,
+                format: 'srt', // Always SRT format
                 langName: languageMap[sub.lang] || sub.lang,
                 releaseName: 'OpenSubtitles',
                 rating: 0,
@@ -245,131 +221,18 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type, videoP
 
 // --- SRT Parsing and Merging Helpers ---
 
-// Fetches subtitle content from URL (handles encoding detection and format conversion)
+// Fetches subtitle content from URL (always UTF-8 SRT format)
 async function fetchSubtitleContent(url, sourceFormat = 'srt') {
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await axios.get(url, {
-            responseType: 'arraybuffer', // Get as buffer to handle encoding detection
+            responseType: 'text',
             timeout: 15000,
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
 
-        let contentBuffer = Buffer.from(response.data);
-        let subtitleText;
-
-        // 1. Detect Encoding using chardet
-        let detectedEncoding = 'utf8'; // Default
-        try {
-            const rawDetectedEncoding = chardet.detect(contentBuffer);
-            console.log(`chardet detected encoding: ${rawDetectedEncoding}`);
-
-            if (rawDetectedEncoding) {
-                const normalizedEncoding = rawDetectedEncoding.toLowerCase();
-                // Map common names/aliases
-                switch (normalizedEncoding) {
-                    case 'windows-1254':
-                        detectedEncoding = 'win1254';
-                        break;
-                    case 'iso-8859-9':
-                        detectedEncoding = 'iso88599';
-                        break;
-                    case 'windows-1252':
-                        detectedEncoding = 'win1252';
-                        break;
-                    case 'utf-16le':
-                        detectedEncoding = 'utf16le';
-                        break;
-                    case 'utf-16be':
-                        detectedEncoding = 'utf16be';
-                        break;
-                    case 'ascii':
-                    case 'us-ascii':
-                        detectedEncoding = 'utf8'; // Treat ASCII as UTF-8
-                        break;
-                    case 'utf-8':
-                        detectedEncoding = 'utf8';
-                        break;
-                    default:
-                        // Check if iconv supports the detected encoding directly
-                        if (iconv.encodingExists(normalizedEncoding)) {
-                            detectedEncoding = normalizedEncoding;
-                        } else {
-                            console.warn(`Detected encoding '${rawDetectedEncoding}' not supported. Falling back to UTF-8.`);
-                            detectedEncoding = 'utf8';
-                        }
-                }
-                console.log(`Using encoding: ${detectedEncoding}`);
-            } else {
-                console.log(`Encoding detection failed. Defaulting to UTF-8.`);
-            }
-        } catch (detectionError) {
-            console.warn(`Error during encoding detection: ${detectionError.message}. Defaulting to UTF-8.`);
-        }
-
-        // 2. Decode using detected encoding
-        try {
-            subtitleText = iconv.decode(contentBuffer, detectedEncoding);
-            console.log(`Successfully decoded subtitle using ${detectedEncoding}.`);
-
-            // Remove BOM if present
-            if (detectedEncoding === 'utf8' && subtitleText.charCodeAt(0) === 0xFEFF) {
-                console.log("Found BOM character, removing it.");
-                subtitleText = subtitleText.substring(1);
-            }
-        } catch (decodeError) {
-            console.error(`Error decoding with ${detectedEncoding}: ${decodeError.message}`);
-            // Fallback to latin1
-            console.warn(`Falling back to latin1 decoding.`);
-            try {
-                subtitleText = iconv.decode(contentBuffer, 'latin1');
-            } catch (fallbackError) {
-                console.error(`Fallback decoding failed: ${fallbackError.message}`);
-                return null;
-            }
-        }
-
-        // 3. Convert to SRT if needed
-        if (sourceFormat.toLowerCase() !== 'srt') {
-            console.log(`Converting subtitle from ${sourceFormat} to srt.`);
-            let convertedSrt = null;
-
-            // Attempt 1: Use subsrt
-            try {
-                console.log(`Attempting conversion with 'subsrt'...`);
-                const options = { format: 'srt' };
-                if (sourceFormat.toLowerCase() === 'sub') {
-                    options.fps = 23.976;
-                }
-                const result = subsrt.convert(subtitleText, options);
-                if (result) {
-                    convertedSrt = result;
-                    console.log("Successfully converted to SRT using 'subsrt'.");
-                } else {
-                    throw new Error("'subsrt.convert' returned empty result.");
-                }
-            } catch (subsrtError) {
-                console.warn(`'subsrt' failed to convert from ${sourceFormat}: ${subsrtError.message}`);
-                // Fallback to subtitle-converter
-                console.log(`Falling back to 'subtitle-converter'...`);
-                try {
-                    const { subtitle, status } = convertWithSubtitleConverter(subtitleText, '.srt', { removeTextFormatting: true });
-                    if (status.success) {
-                        convertedSrt = subtitle;
-                        console.log("Successfully converted to SRT using 'subtitle-converter'.");
-                    } else {
-                        console.error(`Fallback 'subtitle-converter' also failed. Status:`, status);
-                        return null;
-                    }
-                } catch (fallbackError) {
-                    console.error(`Error during fallback conversion with 'subtitle-converter':`, fallbackError.message);
-                    return null;
-                }
-            }
-            subtitleText = convertedSrt;
-        }
-
-        console.log(`Successfully fetched and processed subtitle: ${url}`);
+        const subtitleText = response.data;
+        console.log(`Successfully fetched subtitle: ${url}`);
         return subtitleText;
 
     } catch (error) {
