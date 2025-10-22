@@ -96,7 +96,7 @@ function parseLangCode(lang) {
 // (All previous queue/timer logic has been removed intentionally)
 
 // --- Helper Function to Fetch and Select Subtitle ---
-async function fetchAndSelectSubtitle(languageId, baseSearchParams, type) {
+async function fetchAndSelectSubtitle(languageId, baseSearchParams, type, videoParams = {}) {
     // Build the new API URL
     const imdbId = `tt${baseSearchParams.imdbid}`;
     let apiUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${imdbId}`;
@@ -104,6 +104,23 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type) {
     // Add series parameters if available
     if (type === 'series' && baseSearchParams.season && baseSearchParams.episode) {
         apiUrl += `:${baseSearchParams.season}:${baseSearchParams.episode}`;
+    }
+    
+    // Build query parameters for better subtitle matching
+    const queryParams = [];
+    if (videoParams.filename) {
+        queryParams.push(`filename=${encodeURIComponent(videoParams.filename)}`);
+    }
+    if (videoParams.videoSize) {
+        queryParams.push(`videoSize=${videoParams.videoSize}`);
+    }
+    if (videoParams.videoHash) {
+        queryParams.push(`videoHash=${videoParams.videoHash}`);
+    }
+    
+    // Add query parameters if any exist
+    if (queryParams.length > 0) {
+        apiUrl += `/${queryParams.join('&')}`;
     }
     
     apiUrl += '.json';
@@ -514,12 +531,23 @@ process.on('SIGINT', () => {
             }
 
             try {
+                // Extract video parameters from extra for better matching
+                const videoParams = {
+                    filename: extra?.filename,
+                    videoSize: extra?.videoSize,
+                    videoHash: extra?.videoHash
+                };
+                
+                if (videoParams.filename || videoParams.videoSize || videoParams.videoHash) {
+                    console.log('Video matching parameters:', videoParams);
+                }
+
                 // 1. Fetch Subtitle Metadata Lists
                 console.log(`Fetching metadata list for main language: ${mainLang}`);
-                const mainSubInfoList = await fetchAndSelectSubtitle(mainLang, baseSearchParams, type);
+                const mainSubInfoList = await fetchAndSelectSubtitle(mainLang, baseSearchParams, type, videoParams);
                 
                 console.log(`Fetching metadata list for translation language: ${transLang}`);
-                const transSubInfoList = await fetchAndSelectSubtitle(transLang, baseSearchParams, type);
+                const transSubInfoList = await fetchAndSelectSubtitle(transLang, baseSearchParams, type, videoParams);
 
                 // Check if we have subtitles for both languages
                 if (!mainSubInfoList || mainSubInfoList.length === 0) {
