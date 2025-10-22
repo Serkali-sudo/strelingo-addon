@@ -96,7 +96,7 @@ function parseLangCode(lang) {
 // (All previous queue/timer logic has been removed intentionally)
 
 // --- Helper Function to Fetch All Subtitles ---
-async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}) {
+async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}, needsJapanese = false) {
     // Build the new API URL
     const imdbId = `tt${baseSearchParams.imdbid}`;
     let apiUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${imdbId}`;
@@ -133,33 +133,40 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}) {
             timeout: 10000
         });
         
-        // Also fetch from Buta no Subs for Japanese content
-        const butaNoSubsUrl = `https://buta-no-subs-stremio-addon.onrender.com/subtitles/${type}/tt${baseSearchParams.imdbid}${(baseSearchParams.season) ? ":" + baseSearchParams.season + ":" + baseSearchParams.episode : ""}.json`;
-        console.log(`Also fetching Japanese subtitles from: ${butaNoSubsUrl}`);
+        const promises = [opensubsResponse];
         
-        const butaNoSubsResponse = axios.get(butaNoSubsUrl, {
-            timeout: 10000
-        }).then((res) => {
-            // Adapt response to expected format
-            if (!res.data || !Array.isArray(res.data.subtitles)) {
+        // Only fetch from Buta no Subs if one of the languages is Japanese
+        if (needsJapanese) {
+            const butaNoSubsUrl = `https://buta-no-subs-stremio-addon.onrender.com/subtitles/${type}/tt${baseSearchParams.imdbid}${(baseSearchParams.season) ? ":" + baseSearchParams.season + ":" + baseSearchParams.episode : ""}.json`;
+            console.log(`Also fetching Japanese subtitles from: ${butaNoSubsUrl}`);
+            
+            const butaNoSubsResponse = axios.get(butaNoSubsUrl, {
+                timeout: 10000
+            }).then((res) => {
+                // Adapt response to expected format
+                if (!res.data || !Array.isArray(res.data.subtitles)) {
+                    return { subtitles: [] };
+                }
+                const subtitles = res.data.subtitles.map((sub, idx) => ({
+                    id: sub.id,
+                    url: sub.url,
+                    lang: sub.lang || 'jpn',
+                    downloads: res.data.subtitles.length - idx // Preserve order
+                }));
+                return { subtitles };
+            }).catch(() => {
+                // If Buta no Subs fails, just return empty
                 return { subtitles: [] };
-            }
-            const subtitles = res.data.subtitles.map((sub, idx) => ({
-                id: sub.id,
-                url: sub.url,
-                lang: sub.lang || 'jpn',
-                downloads: res.data.subtitles.length - idx // Preserve order
-            }));
-            return { subtitles };
-        }).catch(() => {
-            // If Buta no Subs fails, just return empty
-            return { subtitles: [] };
-        });
+            });
+            
+            promises.push(butaNoSubsResponse);
+        }
         
-        // Wait for both requests
-        const results = await Promise.allSettled([opensubsResponse, butaNoSubsResponse]);
+        // Wait for all requests
+        const results = await Promise.allSettled(promises);
         
-        if (results[0].status === 'rejected' && results[1].status === 'rejected') {
+        // Check if all requests failed
+        if (results.every(result => result.status === 'rejected')) {
             throw results[0].reason;
         }
         
@@ -170,8 +177,8 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}) {
             allSubtitles = allSubtitles.concat(results[0].value.data.subtitles);
         }
         
-        // Add Buta no Subs results (Japanese)
-        if (results[1].status === 'fulfilled' && results[1].value.subtitles) {
+        // Add Buta no Subs results (Japanese) if we requested it
+        if (needsJapanese && results[1] && results[1].status === 'fulfilled' && results[1].value.subtitles) {
             allSubtitles = allSubtitles.concat(results[1].value.subtitles);
         }
 
@@ -540,8 +547,14 @@ process.on('SIGINT', () => {
                 }
 
                 // 1. Fetch ALL subtitles once (all languages)
+                // Check if we need Japanese subtitles
+                const needsJapanese = mainLang === 'jpn' || transLang === 'jpn';
+                if (needsJapanese) {
+                    console.log('Japanese language detected, will fetch from Buta no Subs too.');
+                }
+                
                 console.log('Fetching all subtitles...');
-                const allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams);
+                const allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese);
                 
                 if (!allSubtitles) {
                     console.log('Failed to fetch subtitles.');
