@@ -130,7 +130,6 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type, videoP
     try {
         const response = await (async () => {
             const opensubsResponse = axios.get(apiUrl, {
-                headers: { 'User-Agent': 'TemporaryUserAgent' },
                 timeout: 10000
             });
             
@@ -142,7 +141,6 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type, videoP
                 console.log(`Searching ${languageId} subtitles at: ${butaNoSubsUrl}`);
                 
                 const butaNoSubsResponse = axios.get(butaNoSubsUrl, {
-                    headers: { 'User-Agent': 'TemporaryUserAgent' },
                     timeout: 10000
                 }).then((res) => {
                     // Adapt response to expected format
@@ -230,9 +228,6 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt') {
         const response = await axios.get(url, {
             responseType: 'text',
             timeout: 15000,
-            headers: {
-                'User-Agent': 'TemporaryUserAgent'
-            },
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
 
