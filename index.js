@@ -42,7 +42,7 @@ const ADDON_PORT = process.env.PORT || 7000;
 // Create a new addon builder
 const builder = new addonBuilder({
     id: 'com.serhat.strelingo',
-    version: '0.1.1',
+    version: '0.1.2',
     name: 'Strelingo - Dual Language Subtitles',
     description: 'Provides dual subtitles (main + translation) from OpenSubtitles for language learning. <br><a href="https://github.com/Serkali-sudo/strelingo-addon" style="color: #1E90FF;">GitHub</a>',
     resources: ['subtitles'],
