@@ -111,10 +111,61 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type) {
     console.log(`Searching ${languageId} subtitles at: ${apiUrl}`);
 
     try {
-        const response = await axios.get(apiUrl, {
-            headers: { 'User-Agent': 'TemporaryUserAgent' },
-            timeout: 10000
-        });
+        const response = await (async () => {
+            const opensubsResponse = axios.get(apiUrl, {
+                headers: { 'User-Agent': 'TemporaryUserAgent' },
+                timeout: 10000
+            });
+            
+            if (languageId !== "jpn") {
+                return opensubsResponse;
+            } else {
+                // Also request Buta no Subs for Japanese and wait for both promises
+                const butaNoSubsUrl = `https://buta-no-subs-stremio-addon.onrender.com/subtitles/${type}/tt${baseSearchParams.imdbid}${(baseSearchParams.season) ? ":" + baseSearchParams.season + ":" + baseSearchParams.episode : ""}.json`;
+                console.log(`Searching ${languageId} subtitles at: ${butaNoSubsUrl}`);
+                
+                const butaNoSubsResponse = axios.get(butaNoSubsUrl, {
+                    headers: { 'User-Agent': 'TemporaryUserAgent' },
+                    timeout: 10000
+                }).then((res) => {
+                    // Adapt response to expected format
+                    if (!res.data || !Array.isArray(res.data.subtitles)) {
+                        // If response is not what we expect, treat it as no subtitles
+                        return { subtitles: [] };
+                    }
+                    const subtitles = res.data.subtitles.map((sub, idx) => ({
+                        id: sub.id,
+                        url: sub.url,
+                        lang: sub.lang || 'jpn',
+                        downloads: res.data.subtitles.length - idx // Preserve order
+                    }));
+                    return { subtitles };
+                }).catch(() => {
+                    // If Buta no Subs fails, just return empty
+                    return { subtitles: [] };
+                });
+                
+                return Promise.allSettled([opensubsResponse, butaNoSubsResponse]).then((results) => {
+                    if (results[0].status === 'rejected' && results[1].status === 'rejected') {
+                        throw results[0].reason;
+                    }
+                    
+                    let combinedSubs = [];
+                    
+                    // Add OpenSubtitles results
+                    if (results[0].status === 'fulfilled' && results[0].value.data && results[0].value.data.subtitles) {
+                        combinedSubs = combinedSubs.concat(results[0].value.data.subtitles.filter(sub => sub.lang === languageId));
+                    }
+                    
+                    // Add Buta no Subs results
+                    if (results[1].status === 'fulfilled' && results[1].value.subtitles) {
+                        combinedSubs = combinedSubs.concat(results[1].value.subtitles);
+                    }
+                    
+                    return { data: { subtitles: combinedSubs } };
+                });
+            }
+        })();
 
         if (!response.data || !response.data.subtitles || !Array.isArray(response.data.subtitles)) {
             console.log(`No ${languageId} subtitles found or invalid API response.`);
@@ -139,7 +190,7 @@ async function fetchAndSelectSubtitle(languageId, baseSearchParams, type) {
                 langName: languageMap[sub.lang] || sub.lang,
                 releaseName: 'OpenSubtitles',
                 rating: 0,
-                downloads: langSubs.length - idx // Preserve order
+                downloads: sub.downloads || (langSubs.length - idx) // Preserve order
             };
         });
 
