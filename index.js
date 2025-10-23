@@ -264,6 +264,7 @@ async function fetchSubtitlesOldAPI(languageId, baseSearchParams, type) {
 
     try {
         const response = await axios.get(searchUrl, {
+            headers: { 'User-Agent': 'TemporaryUserAgent' },
             timeout: 10000
         });
 
