@@ -3,8 +3,13 @@
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const { Buffer } = require('buffer');
+const pako = require('pako');
+const chardet = require('chardet');
+const iconv = require('iconv-lite');
 const { put } = require('@vercel/blob');
 const { createClient } = require('@supabase/supabase-js');
+const { convert: convertWithSubtitleConverter } = require('subtitle-converter');
+const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
 
 const languageMap = {
@@ -33,6 +38,9 @@ const languageMap = {
 
 
 const languageOptions = Object.entries(languageMap).map(([code, name]) => `${name} [${code}]`);
+
+// OpenSubtitles REST API base URL (for fallback)
+const OPENSUBS_API_URL = 'https://rest.opensubtitles.org';
 
 // Configuration
 const ADDON_PORT = process.env.PORT || 7000;
@@ -226,11 +234,92 @@ function filterSubtitlesByLanguage(allSubtitles, languageId) {
     console.log(`Found ${subtitleList.length} valid subtitles for ${languageId}.`);
     return subtitleList;
 }
+
+// --- OLD API Fallback Functions ---
+
+// Helper function to build the OLD OpenSubtitles search URL
+function buildSearchUrl(params) {
+    if (params.episode) {
+        const parts = [];
+        if (params.episode) parts.push(`episode-${params.episode}`);
+        if (params.imdbid) parts.push(`imdbid-${params.imdbid}`);
+        if (params.season) parts.push(`season-${params.season}`);
+        if (params.sublanguageid) parts.push(`sublanguageid-${params.sublanguageid}`);
+        return `${OPENSUBS_API_URL}/search/${parts.join('/')}`;
+    }
+    
+    const searchPath = Object.entries(params)
+        .map(([key, value]) => `${key}-${value}`)
+        .join('/');
+    
+    return `${OPENSUBS_API_URL}/search/${searchPath}`;
+}
+
+// Fetch subtitles using OLD REST API
+async function fetchSubtitlesOldAPI(languageId, baseSearchParams, type) {
+    const supportedFormats = ['dfxp', 'scc', 'srt', 'ttml', 'vtt', 'ssa', 'ass', 'sub', 'sbv', 'smi', 'lrc', 'json'];
+    const searchParams = { ...baseSearchParams, sublanguageid: languageId };
+    const searchUrl = buildSearchUrl(searchParams);
+    console.log(`[OLD API] Searching ${languageId} subtitles at: ${searchUrl}`);
+
+    try {
+        const response = await axios.get(searchUrl, {
+            timeout: 10000
+        });
+
+        if (!response.data || !Array.isArray(response.data) || response.data.length === 0) {
+            console.log(`[OLD API] No ${languageId} subtitles found or invalid API response.`);
+            return null;
+        }
+        
+        // Filter for valid subtitle formats
+        const validFormatSubs = response.data.filter(subtitle =>
+            subtitle.SubDownloadLink &&
+            subtitle.SubFormat &&
+            supportedFormats.includes(subtitle.SubFormat.toLowerCase())
+        );
+
+        if (validFormatSubs.length === 0) {
+            console.log(`[OLD API] No suitable subtitle format found for ${languageId}.`);
+            return null;
+        }
+
+        // Sort by download count
+        validFormatSubs.sort((a, b) => {
+            const downloadsA = parseInt(a.SubDownloadsCnt, 10) || 0;
+            const downloadsB = parseInt(b.SubDownloadsCnt, 10) || 0;
+            return downloadsB - downloadsA;
+        });
+
+        // Map to the desired return format
+        const subtitleList = validFormatSubs.map(sub => {
+            const directUrl = sub.SubDownloadLink;
+            return {
+                id: sub.IDSubtitleFile,
+                url: directUrl,
+                lang: sub.SubLanguageID,
+                format: sub.SubFormat,
+                langName: sub.LanguageName,
+                releaseName: sub.MovieReleaseName || sub.MovieName || 'Unknown',
+                rating: parseFloat(sub.SubRating) || 0,
+                downloads: parseInt(sub.SubDownloadsCnt, 10) || 0
+            };
+        });
+
+        console.log(`[OLD API] Found ${subtitleList.length} valid subtitles for ${languageId}.`);
+        return subtitleList;
+
+    } catch (error) {
+        console.error(`[OLD API] Error fetching ${languageId} subtitles:`, error.message);
+        return null;
+    }
+}
+
 // --- End Helper Function ---
 
 // --- SRT Parsing and Merging Helpers ---
 
-// Fetches subtitle content from URL (always UTF-8 SRT format)
+// Fetches subtitle content from URL (always UTF-8 SRT format from new API)
 async function fetchSubtitleContent(url, sourceFormat = 'srt') {
     console.log(`Fetching subtitle content from: ${url}`);
     try {
@@ -248,6 +337,149 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt') {
         console.error(`Error fetching subtitle content from ${url}:`, error.message);
         if (error.response) {
             console.error(`Status: ${error.response.status}`);
+        }
+        return null;
+    }
+}
+
+// Fetches subtitle content from old API (handles encoding detection and format conversion)
+async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt') {
+    console.log(`[OLD API] Fetching subtitle content from: ${url}`);
+    try {
+        const response = await axios.get(url, {
+            responseType: 'arraybuffer', // Get as buffer to handle encoding detection
+            timeout: 15000,
+            maxContentLength: 5 * 1024 * 1024  // 5 MB limit
+        });
+
+        let contentBuffer = Buffer.from(response.data);
+        let subtitleText;
+
+        // 1. Handle Gzip decompression first
+        if (url.endsWith('.gz') || (contentBuffer.length > 2 && contentBuffer[0] === 0x1f && contentBuffer[1] === 0x8b)) {
+            console.log(`[OLD API] Decompressing gzipped subtitle: ${url}`);
+            try {
+                contentBuffer = Buffer.from(pako.ungzip(contentBuffer));
+                console.log(`[OLD API] Decompressed size: ${contentBuffer.length}`);
+            } catch (unzipError) {
+                console.error(`[OLD API] Error decompressing subtitle ${url}: ${unzipError.message}`);
+                return null;
+            }
+        }
+
+        // 2. Detect Encoding using chardet
+        let detectedEncoding = 'utf8';
+        try {
+            const rawDetectedEncoding = chardet.detect(contentBuffer);
+            console.log(`[OLD API] chardet detected encoding: ${rawDetectedEncoding}`);
+
+            if (rawDetectedEncoding) {
+                const normalizedEncoding = rawDetectedEncoding.toLowerCase();
+                switch (normalizedEncoding) {
+                    case 'windows-1254':
+                        detectedEncoding = 'win1254';
+                        break;
+                    case 'iso-8859-9':
+                        detectedEncoding = 'iso88599';
+                        break;
+                    case 'windows-1252':
+                        detectedEncoding = 'win1252';
+                        break;
+                    case 'utf-16le':
+                        detectedEncoding = 'utf16le';
+                        break;
+                    case 'utf-16be':
+                        detectedEncoding = 'utf16be';
+                        break;
+                    case 'ascii':
+                    case 'us-ascii':
+                        detectedEncoding = 'utf8';
+                        break;
+                    case 'utf-8':
+                        detectedEncoding = 'utf8';
+                        break;
+                    default:
+                        if (iconv.encodingExists(normalizedEncoding)) {
+                            detectedEncoding = normalizedEncoding;
+                        } else {
+                            console.warn(`[OLD API] Detected encoding '${rawDetectedEncoding}' not supported. Falling back to UTF-8.`);
+                            detectedEncoding = 'utf8';
+                        }
+                }
+                console.log(`[OLD API] Using encoding: ${detectedEncoding}`);
+            } else {
+                console.log(`[OLD API] Encoding detection failed. Defaulting to UTF-8.`);
+            }
+        } catch (detectionError) {
+            console.warn(`[OLD API] Error during encoding detection: ${detectionError.message}. Defaulting to UTF-8.`);
+        }
+
+        // 3. Decode using detected encoding
+        try {
+            subtitleText = iconv.decode(contentBuffer, detectedEncoding);
+            console.log(`[OLD API] Successfully decoded subtitle using ${detectedEncoding}.`);
+
+            // Remove BOM if present
+            if (detectedEncoding === 'utf8' && subtitleText.charCodeAt(0) === 0xFEFF) {
+                console.log("[OLD API] Found BOM character, removing it.");
+                subtitleText = subtitleText.substring(1);
+            }
+        } catch (decodeError) {
+            console.error(`[OLD API] Error decoding with ${detectedEncoding}: ${decodeError.message}`);
+            console.warn(`[OLD API] Falling back to latin1 decoding.`);
+            try {
+                subtitleText = iconv.decode(contentBuffer, 'latin1');
+            } catch (fallbackError) {
+                console.error(`[OLD API] Fallback decoding failed: ${fallbackError.message}`);
+                return null;
+            }
+        }
+
+        // 4. Convert to SRT if needed
+        if (sourceFormat.toLowerCase() !== 'srt') {
+            console.log(`[OLD API] Converting subtitle from ${sourceFormat} to srt.`);
+            let convertedSrt = null;
+
+            try {
+                console.log(`[OLD API] Attempting conversion with 'subsrt'...`);
+                const options = { format: 'srt' };
+                if (sourceFormat.toLowerCase() === 'sub') {
+                    options.fps = 23.976;
+                }
+                const result = subsrt.convert(subtitleText, options);
+                if (result) {
+                    convertedSrt = result;
+                    console.log("[OLD API] Successfully converted to SRT using 'subsrt'.");
+                } else {
+                    throw new Error("'subsrt.convert' returned empty result.");
+                }
+            } catch (subsrtError) {
+                console.warn(`[OLD API] 'subsrt' failed to convert from ${sourceFormat}: ${subsrtError.message}`);
+                console.log(`[OLD API] Falling back to 'subtitle-converter'...`);
+                try {
+                    const { subtitle, status } = convertWithSubtitleConverter(subtitleText, '.srt', { removeTextFormatting: true });
+                    if (status.success) {
+                        convertedSrt = subtitle;
+                        console.log("[OLD API] Successfully converted to SRT using 'subtitle-converter'.");
+                    } else {
+                        console.error(`[OLD API] Fallback 'subtitle-converter' also failed. Status:`, status);
+                        return null;
+                    }
+                } catch (fallbackError) {
+                    console.error(`[OLD API] Error during fallback conversion with 'subtitle-converter':`, fallbackError.message);
+                    return null;
+                }
+            }
+            subtitleText = convertedSrt;
+        }
+
+        console.log(`[OLD API] Successfully fetched and processed subtitle: ${url}`);
+        return subtitleText;
+
+    } catch (error) {
+        console.error(`[OLD API] Error fetching subtitle content from ${url}:`, error.message);
+        if (error.response) {
+            console.error(`[OLD API] Status: ${error.response.status}`);
         }
         return null;
     }
@@ -553,16 +785,8 @@ process.on('SIGINT', () => {
                     console.log('Japanese language detected, will fetch from Buta no Subs too.');
                 }
                 
-                // Try with video parameters first
-                const hasVideoParams = videoParams.filename || videoParams.videoSize || videoParams.videoHash;
                 console.log('Fetching all subtitles...');
-                let allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese);
-                
-                // If no subtitles found and we had video params, retry without them
-                if (!allSubtitles && hasVideoParams) {
-                    console.log('No subtitles found with video matching parameters. Retrying without filters...');
-                    allSubtitles = await fetchAllSubtitles(baseSearchParams, type, {}, needsJapanese);
-                }
+                const allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese);
                 
                 if (!allSubtitles) {
                     console.log('Failed to fetch subtitles.');
@@ -575,33 +799,33 @@ process.on('SIGINT', () => {
                 
                 console.log(`Filtering for translation language: ${transLang}`);
                 let transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang);
-                
-                // If either language not found and we had video params, retry without filters
-                if ((!mainSubInfoList || !transSubInfoList) && hasVideoParams) {
-                    console.log('One or both languages not found with filters. Retrying without video matching parameters...');
-                    const allSubtitlesNoFilter = await fetchAllSubtitles(baseSearchParams, type, {}, needsJapanese);
-                    
-                    if (allSubtitlesNoFilter) {
-                        // Only replace the missing language(s)
-                        if (!mainSubInfoList) {
-                            console.log(`Retrying main language: ${mainLang} without filters`);
-                            mainSubInfoList = filterSubtitlesByLanguage(allSubtitlesNoFilter, mainLang);
-                        }
-                        if (!transSubInfoList) {
-                            console.log(`Retrying translation language: ${transLang} without filters`);
-                            transSubInfoList = filterSubtitlesByLanguage(allSubtitlesNoFilter, transLang);
-                        }
-                    }
-                }
 
-                // Check if we have subtitles for both languages
-                if (!mainSubInfoList || mainSubInfoList.length === 0) {
-                    console.log(`No main language (${mainLang}) subtitles found.`);
-                    return { subtitles: [], cacheMaxAge: 60 };
-                }
-                if (!transSubInfoList || transSubInfoList.length === 0) {
-                    console.warn(`No translation language (${transLang}) subtitles found. Returning empty results.`);
-                    return { subtitles: [], cacheMaxAge: 60 };
+                // FALLBACK: If either language not found, try OLD API
+                if (!mainSubInfoList || mainSubInfoList.length === 0 || !transSubInfoList || transSubInfoList.length === 0) {
+                    console.warn('⚠️ One or both languages not found in new API. Trying OLD API fallback...');
+                    
+                    // Try fetching missing language(s) from old API
+                    if (!mainSubInfoList || mainSubInfoList.length === 0) {
+                        console.log(`[FALLBACK] Fetching main language (${mainLang}) from OLD API...`);
+                        mainSubInfoList = await fetchSubtitlesOldAPI(mainLang, baseSearchParams, type);
+                    }
+                    
+                    if (!transSubInfoList || transSubInfoList.length === 0) {
+                        console.log(`[FALLBACK] Fetching translation language (${transLang}) from OLD API...`);
+                        transSubInfoList = await fetchSubtitlesOldAPI(transLang, baseSearchParams, type);
+                    }
+                    
+                    // Check again after fallback
+                    if (!mainSubInfoList || mainSubInfoList.length === 0) {
+                        console.log(`No main language (${mainLang}) subtitles found even with fallback.`);
+                        return { subtitles: [], cacheMaxAge: 60 };
+                    }
+                    if (!transSubInfoList || transSubInfoList.length === 0) {
+                        console.warn(`No translation language (${transLang}) subtitles found even with fallback.`);
+                        return { subtitles: [], cacheMaxAge: 60 };
+                    }
+                    
+                    console.log('✅ Successfully fetched subtitles using OLD API fallback!');
                 }
                 
                 // 2. Select up to 4 unique translation candidates
@@ -627,7 +851,12 @@ process.on('SIGINT', () => {
                 for (const mainSubInfo of mainSubInfoList) {
                     console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, Downloads=${mainSubInfo.downloads}`);
                     
-                    const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format);
+                    // Use old API fetch if format is not SRT (indicates old API source)
+                    const fetchFunc = mainSubInfo.format && mainSubInfo.format.toLowerCase() !== 'srt' 
+                        ? fetchSubtitleContentOldAPI 
+                        : fetchSubtitleContent;
+                    
+                    const mainSubContent = await fetchFunc(mainSubInfo.url, mainSubInfo.format);
                     if (!mainSubContent) {
                         console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
                         continue;
@@ -659,8 +888,13 @@ process.on('SIGINT', () => {
                     const version = i + 1;
                     console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
+                    // Use old API fetch if format is not SRT (indicates old API source)
+                    const fetchFunc = transSubInfo.format && transSubInfo.format.toLowerCase() !== 'srt' 
+                        ? fetchSubtitleContentOldAPI 
+                        : fetchSubtitleContent;
+
                     // Fetch content
-                    const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format);
+                    const transSubContent = await fetchFunc(transSubInfo.url, transSubInfo.format);
                     if (!transSubContent) {
                         console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
                         continue; // Skip to next candidate
