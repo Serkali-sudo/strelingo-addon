@@ -108,12 +108,12 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}, needs
     
     // Build query parameters for better subtitle matching
     const queryParams = [];
-    // if (videoParams.filename) {
-    //     queryParams.push(`filename=${encodeURIComponent(videoParams.filename)}`);
-    // }
-    // if (videoParams.videoSize) {
-    //     queryParams.push(`videoSize=${videoParams.videoSize}`);
-    // }
+    if (videoParams.filename) {
+        queryParams.push(`filename=${encodeURIComponent(videoParams.filename)}`);
+    }
+    if (videoParams.videoSize) {
+        queryParams.push(`videoSize=${videoParams.videoSize}`);
+    }
     if (videoParams.videoHash) {
         queryParams.push(`videoHash=${videoParams.videoHash}`);
     }
@@ -553,8 +553,16 @@ process.on('SIGINT', () => {
                     console.log('Japanese language detected, will fetch from Buta no Subs too.');
                 }
                 
+                // Try with video parameters first
+                const hasVideoParams = videoParams.filename || videoParams.videoSize || videoParams.videoHash;
                 console.log('Fetching all subtitles...');
-                const allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese);
+                let allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese);
+                
+                // If no subtitles found and we had video params, retry without them
+                if (!allSubtitles && hasVideoParams) {
+                    console.log('No subtitles found with video matching parameters. Retrying without filters...');
+                    allSubtitles = await fetchAllSubtitles(baseSearchParams, type, {}, needsJapanese);
+                }
                 
                 if (!allSubtitles) {
                     console.log('Failed to fetch subtitles.');
@@ -563,10 +571,28 @@ process.on('SIGINT', () => {
                 
                 // 2. Filter by languages
                 console.log(`Filtering for main language: ${mainLang}`);
-                const mainSubInfoList = filterSubtitlesByLanguage(allSubtitles, mainLang);
+                let mainSubInfoList = filterSubtitlesByLanguage(allSubtitles, mainLang);
                 
                 console.log(`Filtering for translation language: ${transLang}`);
-                const transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang);
+                let transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang);
+                
+                // If either language not found and we had video params, retry without filters
+                if ((!mainSubInfoList || !transSubInfoList) && hasVideoParams) {
+                    console.log('One or both languages not found with filters. Retrying without video matching parameters...');
+                    const allSubtitlesNoFilter = await fetchAllSubtitles(baseSearchParams, type, {}, needsJapanese);
+                    
+                    if (allSubtitlesNoFilter) {
+                        // Only replace the missing language(s)
+                        if (!mainSubInfoList) {
+                            console.log(`Retrying main language: ${mainLang} without filters`);
+                            mainSubInfoList = filterSubtitlesByLanguage(allSubtitlesNoFilter, mainLang);
+                        }
+                        if (!transSubInfoList) {
+                            console.log(`Retrying translation language: ${transLang} without filters`);
+                            transSubInfoList = filterSubtitlesByLanguage(allSubtitlesNoFilter, transLang);
+                        }
+                    }
+                }
 
                 // Check if we have subtitles for both languages
                 if (!mainSubInfoList || mainSubInfoList.length === 0) {
