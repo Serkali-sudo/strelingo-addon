@@ -317,6 +317,41 @@ async function fetchSubtitlesOldAPI(languageId, baseSearchParams, type) {
 
 // --- End Helper Function ---
 
+// --- Cookie Management for Old API ---
+
+let openSubtitlesCookie = null; // Cache for the cookie to be used across requests
+
+// Fetches a session cookie from opensubtitles.org to help with Cloudflare
+async function refreshOpensubtitlesCookie(force = false) {
+    if (openSubtitlesCookie && !force) {
+        console.log('[OLD API] Using cached OpenSubtitles cookie.');
+        return openSubtitlesCookie;
+    }
+
+    console.log(force ? '[OLD API] Forcing cookie refresh...' : '[OLD API] Attempting to fetch fresh cookies from OpenSubtitles...');
+    try {
+        const response = await axios.get('https://www.opensubtitles.org/en/search/subs', {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+            },
+            timeout: 10000
+        });
+
+        const cookies = response.headers['set-cookie'];
+        if (cookies && cookies.length > 0) {
+            const cookieString = cookies.map(c => c.split(';')[0]).join('; ');
+            openSubtitlesCookie = cookieString;
+            console.log('[OLD API] Successfully refreshed OpenSubtitles cookie.');
+            console.log('[OLD API] Cookie:', cookieString);
+        } else {
+            console.warn('[OLD API] Did not receive any set-cookie header from opensubtitles.org.');
+        }
+    } catch (error) {
+        console.error('[OLD API] Failed to fetch cookies from OpenSubtitles:', error.message);
+    }
+    return openSubtitlesCookie;
+}
+
 // --- SRT Parsing and Merging Helpers ---
 
 // Fetches subtitle content from URL (always UTF-8 SRT format from new API)
@@ -343,12 +378,30 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt') {
 }
 
 // Fetches subtitle content from old API (handles encoding detection and format conversion)
-async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt') {
+async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = null, isRetry = false) {
     console.log(`[OLD API] Fetching subtitle content from: ${url}`);
     try {
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US;q=0.5,en;q=0.3',
+            'DNT': '1',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1'
+        };
+
+        if (cookie) {
+            headers['Cookie'] = cookie;
+            console.log(`[OLD API] Using cookie for subtitle download.`);
+        }
+
         const response = await axios.get(url, {
             responseType: 'arraybuffer', // Get as buffer to handle encoding detection
             timeout: 15000,
+            headers: headers,
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
 
@@ -477,9 +530,16 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt') {
         return subtitleText;
 
     } catch (error) {
+        // If we get a 403/404, our cookie might be stale. Try refreshing it and retry once.
+        if (error.response && (error.response.status === 403 || error.response.status === 404) && !isRetry) {
+            console.warn(`[OLD API] Got ${error.response.status} error for ${url}. Forcing cookie refresh and retrying once...`);
+            const newCookie = await refreshOpensubtitlesCookie(true); // Force refresh
+            return await fetchSubtitleContentOldAPI(url, sourceFormat, newCookie, true); // Retry
+        }
+
         console.error(`[OLD API] Error fetching subtitle content from ${url}:`, error.message);
         if (error.response) {
-            console.error(`[OLD API] Status: ${error.response.status}`);
+            console.error(`[OLD API] Status: ${error.response.status}, Headers: ${JSON.stringify(error.response.headers)}`);
         }
         return null;
     }
@@ -767,6 +827,12 @@ process.on('SIGINT', () => {
             }
 
             try {
+                // Get cookie for old API (if needed later)
+                const cookie = await refreshOpensubtitlesCookie();
+                if (!cookie) {
+                    console.warn("[OLD API] Could not obtain a cookie. Old API downloads may fail due to Cloudflare protection.");
+                }
+
                 // Extract video parameters from extra for better matching
                 const videoParams = {
                     filename: extra?.filename,
@@ -852,11 +918,12 @@ process.on('SIGINT', () => {
                     console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, Downloads=${mainSubInfo.downloads}`);
                     
                     // Use old API fetch if format is not SRT (indicates old API source)
-                    const fetchFunc = mainSubInfo.format && mainSubInfo.format.toLowerCase() !== 'srt' 
-                        ? fetchSubtitleContentOldAPI 
-                        : fetchSubtitleContent;
-                    
-                    const mainSubContent = await fetchFunc(mainSubInfo.url, mainSubInfo.format);
+                    let mainSubContent;
+                    if (mainSubInfo.format && mainSubInfo.format.toLowerCase() !== 'srt') {
+                        mainSubContent = await fetchSubtitleContentOldAPI(mainSubInfo.url, mainSubInfo.format, cookie);
+                    } else {
+                        mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format);
+                    }
                     if (!mainSubContent) {
                         console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
                         continue;
@@ -889,12 +956,12 @@ process.on('SIGINT', () => {
                     console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
                     // Use old API fetch if format is not SRT (indicates old API source)
-                    const fetchFunc = transSubInfo.format && transSubInfo.format.toLowerCase() !== 'srt' 
-                        ? fetchSubtitleContentOldAPI 
-                        : fetchSubtitleContent;
-
-                    // Fetch content
-                    const transSubContent = await fetchFunc(transSubInfo.url, transSubInfo.format);
+                    let transSubContent;
+                    if (transSubInfo.format && transSubInfo.format.toLowerCase() !== 'srt') {
+                        transSubContent = await fetchSubtitleContentOldAPI(transSubInfo.url, transSubInfo.format, cookie);
+                    } else {
+                        transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format);
+                    }
                     if (!transSubContent) {
                         console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
                         continue; // Skip to next candidate
