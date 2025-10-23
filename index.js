@@ -108,12 +108,12 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}, needs
     
     // Build query parameters for better subtitle matching
     const queryParams = [];
-    if (videoParams.filename) {
-        queryParams.push(`filename=${encodeURIComponent(videoParams.filename)}`);
-    }
-    if (videoParams.videoSize) {
-        queryParams.push(`videoSize=${videoParams.videoSize}`);
-    }
+    // if (videoParams.filename) {
+    //     queryParams.push(`filename=${encodeURIComponent(videoParams.filename)}`);
+    // }
+    // if (videoParams.videoSize) {
+    //     queryParams.push(`videoSize=${videoParams.videoSize}`);
+    // }
     if (videoParams.videoHash) {
         queryParams.push(`videoHash=${videoParams.videoHash}`);
     }
