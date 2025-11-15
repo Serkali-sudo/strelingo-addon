@@ -29,6 +29,7 @@ or visit the addon page here:
 *   Detects and decodes various character encodings (using `chardet` and `iconv-lite`) to support languages with special characters.
 *   Merges the main language and translation language subtitles into a single `.srt` file.
 *   Formats the translation line to be *italic* and <font color="yellow">yellow</font> (yellow color doesnt work due to stremio overriding the color of subtitles).
+*   **Auto-detects your browser language** and sets it as the default translation language on first use!
 *   Configurable via Stremio addon settings for:
     *   Main Language (Audio Language)
     *   Translation Language (Your Language)
@@ -72,11 +73,22 @@ or visit the addon page here:
 3.  On the addon configuration page that loads:
     *   Select your desired **Main Language** (typically the language the audio is in).
     *   Select your desired **Translation Language** (typically your native language or the one you want for comparison).
+    *   **Note:** The Translation Language field is automatically pre-filled with your browser's language if not previously configured!
 4.  Click the "Install Addon" button or link displayed on the page (it might be at the bottom).
 5.  Your browser might ask for permission to open the link with Stremio. Allow it.
 6.  Stremio should open and prompt you to confirm the installation **with your selected configuration**. Click "Install".
 
 The addon is now installed and configured with your chosen languages.
+
+## Auto Language Detection
+
+The addon automatically detects your browser's language and uses it as the default translation language. Here's how it works:
+
+- When you first install the addon, the **Translation Language** field will be automatically set to match your browser's language settings.
+- This is detected from your browser's `Accept-Language` HTTP header.
+- Supported languages: English, Spanish, French, German, Italian, Portuguese, Russian, Japanese, Korean, Chinese (and 40+ more languages).
+- If your browser language is not supported, the addon will default to English.
+- You can always manually change the translation language in the addon settings at any time.
 
 ## Technical Details
 

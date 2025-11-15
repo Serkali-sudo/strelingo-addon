@@ -36,6 +36,76 @@ const languageMap = {
     'zhc': 'Chinese (Cantonese)', 'zhe': 'Chinese bilingual', 'zht': 'Chinese (traditional)'
 };
 
+// Map ISO 639-1 (browser) language codes to ISO 639-3 (our system) language codes
+const browserLanguageMap = {
+    'en': 'eng', 'es': 'spa', 'fr': 'fre', 'de': 'ger', 'it': 'ita',
+    'pt': 'por', 'pt-br': 'pob', 'ru': 'rus', 'ja': 'jpn', 'ko': 'kor',
+    'zh': 'chi', 'zh-cn': 'chi', 'zh-tw': 'zht', 'ar': 'ara', 'hi': 'hin',
+    'bn': 'ben', 'pa': 'pan', 'te': 'tel', 'mr': 'mar', 'ta': 'tam',
+    'gu': 'guj', 'kn': 'kan', 'ml': 'mal', 'or': 'ori', 'pl': 'pol',
+    'uk': 'ukr', 'tr': 'tur', 'hu': 'hun', 'cs': 'cze', 'ro': 'rum',
+    'nl': 'dut', 'sv': 'swe', 'da': 'dan', 'no': 'nor', 'fi': 'fin',
+    'el': 'ell', 'th': 'tha', 'vi': 'vie', 'id': 'ind', 'ms': 'may',
+    'fil': 'tgl', 'he': 'heb', 'fa': 'per', 'ur': 'urd', 'sq': 'alb',
+    'hr': 'hrv', 'sr': 'scc', 'bg': 'bul', 'sk': 'slo', 'sl': 'slv',
+    'et': 'est', 'lv': 'lav', 'lt': 'lit', 'ca': 'cat', 'eu': 'baq',
+    'gl': 'glg', 'mk': 'mac', 'is': 'ice', 'cy': 'wel', 'ga': 'gle'
+};
+
+// Function to get browser language and find best match in our supported languages
+function getBrowserLanguageDefault() {
+    // Try to get Accept-Language header or use Intl API if available
+    let browserLang = null;
+    
+    // For Node.js environment, try to get from environment or default to 'eng'
+    if (typeof navigator === 'undefined') {
+        // Check if we're in a browser context through the request
+        // This will be overridden in the handler where we have access to request headers
+        browserLang = process.env.LANG || 'en';
+    } else {
+        browserLang = navigator.language || navigator.userLanguage || 'en';
+    }
+    
+    // Normalize the language code (take the first part for variants like 'en-US')
+    const langCode = browserLang.split('-')[0].toLowerCase();
+    
+    // Find the corresponding ISO 639-3 code
+    const iso639_3Code = browserLanguageMap[langCode] || browserLanguageMap[browserLang.toLowerCase()] || 'eng';
+    
+    // Format as "Language [code]"
+    const langName = languageMap[iso639_3Code] || 'English';
+    return `${langName} [${iso639_3Code}]`;
+}
+
+// Function to extract browser language from Accept-Language header
+function extractBrowserLanguageFromHeader(acceptLanguageHeader) {
+    if (!acceptLanguageHeader) {
+        return 'eng';
+    }
+    
+    // Parse Accept-Language header (e.g., "en-US,en;q=0.9,fr;q=0.8")
+    const languages = acceptLanguageHeader
+        .split(',')
+        .map(lang => lang.trim().split(';')[0])
+        .map(lang => lang.split('-')[0].toLowerCase())
+        .filter(lang => lang.length > 0);
+    
+    if (languages.length === 0) {
+        return 'eng';
+    }
+    
+    // Try to find a match in our supported languages
+    for (const lang of languages) {
+        const iso639_3Code = browserLanguageMap[lang];
+        if (iso639_3Code) {
+            return iso639_3Code;
+        }
+    }
+    
+    // Default to English if no match found
+    return 'eng';
+}
+
 
 const languageOptions = Object.entries(languageMap).map(([code, name]) => `${name} [${code}]`);
 
@@ -82,7 +152,7 @@ const builder = new addonBuilder({
             title: 'Translation Language (Your Language)',
             options: languageOptions,
             required: true,
-            default: 'Turkish [tur]'
+            default: 'English [eng]' // Will be auto-detected based on browser language on first config
         }
     ]
 });
@@ -772,7 +842,7 @@ process.on('SIGINT', () => {
         }
 
         // --- Define Addon Handler (Inside IIFE) ---
-        builder.defineSubtitlesHandler(async ({ type, id, extra, config }) => {
+        builder.defineSubtitlesHandler(async ({ type, id, extra, config }, req, res) => {
             console.log('Strelingo Subtitle request:', { type, id, extra });
             console.log('Config:', config);
 
@@ -783,9 +853,18 @@ process.on('SIGINT', () => {
             }
             // ---------------------------------------------------
 
-            // Get selected languages from config, with defaults
-            const mainLangRaw = config?.mainLang || 'eng';
-            const transLangRaw = config?.transLang || 'tur';
+            // Detect browser language from Accept-Language header
+            let browserLanguageCode = 'eng'; // Default fallback
+            if (req && req.headers && req.headers['accept-language']) {
+                browserLanguageCode = extractBrowserLanguageFromHeader(req.headers['accept-language']);
+                console.log(`Detected browser language: ${browserLanguageCode}`);
+            } else {
+                console.log('No Accept-Language header found, using default English');
+            }
+
+            // Get selected languages from config, with browser language as fallback for translation
+            const mainLangRaw = config?.mainLang || 'English [eng]';
+            const transLangRaw = config?.transLang || `${languageMap[browserLanguageCode]} [${browserLanguageCode}]`;
 
             const mainLang = parseLangCode(mainLangRaw);
             const transLang = parseLangCode(transLangRaw);
