@@ -52,31 +52,6 @@ const browserLanguageMap = {
     'gl': 'glg', 'mk': 'mac', 'is': 'ice', 'cy': 'wel', 'ga': 'gle'
 };
 
-// Function to get browser language and find best match in our supported languages
-function getBrowserLanguageDefault() {
-    // Try to get Accept-Language header or use Intl API if available
-    let browserLang = null;
-    
-    // For Node.js environment, try to get from environment or default to 'eng'
-    if (typeof navigator === 'undefined') {
-        // Check if we're in a browser context through the request
-        // This will be overridden in the handler where we have access to request headers
-        browserLang = process.env.LANG || 'en';
-    } else {
-        browserLang = navigator.language || navigator.userLanguage || 'en';
-    }
-    
-    // Normalize the language code (take the first part for variants like 'en-US')
-    const langCode = browserLang.split('-')[0].toLowerCase();
-    
-    // Find the corresponding ISO 639-3 code
-    const iso639_3Code = browserLanguageMap[langCode] || browserLanguageMap[browserLang.toLowerCase()] || 'eng';
-    
-    // Format as "Language [code]"
-    const langName = languageMap[iso639_3Code] || 'English';
-    return `${langName} [${iso639_3Code}]`;
-}
-
 // Function to extract browser language from Accept-Language header
 function extractBrowserLanguageFromHeader(acceptLanguageHeader) {
     if (!acceptLanguageHeader) {
