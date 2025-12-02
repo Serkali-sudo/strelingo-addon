@@ -1,0 +1,30 @@
+services:
+  strelingo:
+    build: .
+    container_name: strelingo-addon
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+    environment:
+      # Choose ONE storage backend:
+
+      # Option 1: Vercel Blob Storage
+      - BLOB_READ_WRITE_TOKEN=${BLOB_READ_WRITE_TOKEN:-}
+      - SKIP_VERCEL_BLOB=${SKIP_VERCEL_BLOB:-}
+
+      # Option 2: Supabase Storage
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
+
+      # Option 3: Local File Storage (self-hosted)
+      - LOCAL_STORAGE_DIR=${LOCAL_STORAGE_DIR:-}
+      - EXTERNAL_URL=${EXTERNAL_URL:-}
+    volumes:
+      # Uncomment to use local file storage (Option 3)
+      # - ./data:/app/subtitles
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7000/manifest.json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
