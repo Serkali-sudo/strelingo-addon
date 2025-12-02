@@ -36,11 +36,13 @@ or visit the addon page here:
 
 ## Requirements
 
-*   [Node.js](https://nodejs.org/) (Version 14 or higher recommend)
+*   [Node.js](https://nodejs.org/) (Version 14 or higher recommended)
 *   [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
 *   You will need either vercel blob key or supabase storage credentials. Because the addon creates a brand new srt everytime and it has to host somewhere. you can put those credentials in .env (You can techinally return the subtitle as base64 but i have found that it only works for stremio 4 version, it didnt worked in stremio 5 or mobile stremio)
-*   If you want vercel blob create a vercel blob in vercel and copy the token and put it in your env named BLOB_READ_WRITE_TOKEN
-*   If you want supabase storage instead of vercel you will need to copy SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_ANON_KEY credentials from your supabase account.
+*   **Storage Configuration** - You need to choose at least one storage option. Configure your choice via the `.env` file (see [`.env.example`](.env.example) for all options):
+    *   **Option 1: Vercel Blob** (cloud) - Create a Vercel Blob in [Vercel Dashboard](https://vercel.com/dashboard/stores), copy the token, and put it in your `.env` as `BLOB_READ_WRITE_TOKEN`
+    *   **Option 2: Supabase Storage** (cloud) - Get `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` from your [Supabase project settings](https://app.supabase.com) and add them to your `.env`
+    *   **Option 3: Local File Storage** (self-hosted) - Set `LOCAL_STORAGE_DIR=./subtitles` in your `.env`. Useful for running on your home network or private server.
 
 ## Local Setup
 
@@ -52,9 +54,15 @@ or visit the addon page here:
 2.  **Install dependencies:**
     ```bash
     npm install
-    # or
-    # yarn install
     ```
+3.  **Configure storage** (create `.env` file):
+    ```bash
+    # Copy the example configuration
+    cp .env.example .env
+
+    # Edit .env and configure your preferred storage option
+    ```
+    See [`.env.example`](.env.example) for all available options and detailed configuration examples.
 
 ## Running the Addon Locally
 
