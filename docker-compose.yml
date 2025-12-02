@@ -15,7 +15,6 @@ services:
       # Option 2: Supabase Storage
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY:-}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
 
       # Option 3: Local File Storage (self-hosted)
       - LOCAL_STORAGE_DIR=${LOCAL_STORAGE_DIR:-}
