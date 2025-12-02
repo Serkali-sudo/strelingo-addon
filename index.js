@@ -7,8 +7,6 @@ const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const { Buffer } = require('buffer');
 const pako = require('pako');
-const chardet = require('chardet');
-const iconv = require('iconv-lite');
 const { put } = require('@vercel/blob');
 const { createClient } = require('@supabase/supabase-js');
 const { convert: convertWithSubtitleConverter } = require('subtitle-converter');
@@ -16,6 +14,7 @@ const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
 const fs = require('fs').promises;
 const path = require('path');
+const { fixCharacterEncodings, decodeSubtitleBuffer } = require('./encoding');
 
 const languageMap = {
     'abk': 'Abkhazian', 'afr': 'Afrikaans', 'alb': 'Albanian', 'amh': 'Amharic', 'ara': 'Arabic',
@@ -407,17 +406,29 @@ async function refreshOpensubtitlesCookie(force = false) {
 
 // --- SRT Parsing and Merging Helpers ---
 
-// Fetches subtitle content from URL (always UTF-8 SRT format from new API)
+// Fetches subtitle content from URL (handles encoding detection)
 async function fetchSubtitleContent(url, sourceFormat = 'srt') {
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await axios.get(url, {
-            responseType: 'text',
+            responseType: 'arraybuffer',  // Get raw bytes to detect encoding
             timeout: 15000,
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
 
-        const subtitleText = response.data;
+        const buffer = Buffer.from(response.data);
+
+        // Decode the subtitle content using shared encoding detection.
+        // - It checks for BOMs first (definitive when present), then falls back to chardet
+        // - It handles double-encoded UTF-16 BOMs (common issue with subtitle APIs)
+        // - It applies fixCharacterEncodings() to repair double-encoded UTF-8 text
+        // - Single source of truth for encoding logic across all subtitle sources
+        //
+        // The function handles: UTF-16 LE/BE (with BOM), double-encoded BOMs,
+        // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
+        // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
+        const subtitleText = decodeSubtitleBuffer(buffer);
+
         console.log(`Successfully fetched subtitle: ${url}`);
         return subtitleText;
 
@@ -473,75 +484,18 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
             }
         }
 
-        // 2. Detect Encoding using chardet
-        let detectedEncoding = 'utf8';
-        try {
-            const rawDetectedEncoding = chardet.detect(contentBuffer);
-            console.log(`[OLD API] chardet detected encoding: ${rawDetectedEncoding}`);
+        // 2. Decode the subtitle content using shared encoding detection.
+        // - It checks for BOMs first (definitive when present), then falls back to chardet
+        // - It handles double-encoded UTF-16 BOMs (common issue with subtitle APIs)
+        // - It applies fixCharacterEncodings() to repair double-encoded UTF-8 text
+        // - Single source of truth for encoding logic across all subtitle sources
+        //
+        // The function handles: UTF-16 LE/BE (with BOM), double-encoded BOMs,
+        // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
+        // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
+        subtitleText = decodeSubtitleBuffer(contentBuffer);
 
-            if (rawDetectedEncoding) {
-                const normalizedEncoding = rawDetectedEncoding.toLowerCase();
-                switch (normalizedEncoding) {
-                    case 'windows-1254':
-                        detectedEncoding = 'win1254';
-                        break;
-                    case 'iso-8859-9':
-                        detectedEncoding = 'iso88599';
-                        break;
-                    case 'windows-1252':
-                        detectedEncoding = 'win1252';
-                        break;
-                    case 'utf-16le':
-                        detectedEncoding = 'utf16le';
-                        break;
-                    case 'utf-16be':
-                        detectedEncoding = 'utf16be';
-                        break;
-                    case 'ascii':
-                    case 'us-ascii':
-                        detectedEncoding = 'utf8';
-                        break;
-                    case 'utf-8':
-                        detectedEncoding = 'utf8';
-                        break;
-                    default:
-                        if (iconv.encodingExists(normalizedEncoding)) {
-                            detectedEncoding = normalizedEncoding;
-                        } else {
-                            console.warn(`[OLD API] Detected encoding '${rawDetectedEncoding}' not supported. Falling back to UTF-8.`);
-                            detectedEncoding = 'utf8';
-                        }
-                }
-                console.log(`[OLD API] Using encoding: ${detectedEncoding}`);
-            } else {
-                console.log(`[OLD API] Encoding detection failed. Defaulting to UTF-8.`);
-            }
-        } catch (detectionError) {
-            console.warn(`[OLD API] Error during encoding detection: ${detectionError.message}. Defaulting to UTF-8.`);
-        }
-
-        // 3. Decode using detected encoding
-        try {
-            subtitleText = iconv.decode(contentBuffer, detectedEncoding);
-            console.log(`[OLD API] Successfully decoded subtitle using ${detectedEncoding}.`);
-
-            // Remove BOM if present
-            if (detectedEncoding === 'utf8' && subtitleText.charCodeAt(0) === 0xFEFF) {
-                console.log("[OLD API] Found BOM character, removing it.");
-                subtitleText = subtitleText.substring(1);
-            }
-        } catch (decodeError) {
-            console.error(`[OLD API] Error decoding with ${detectedEncoding}: ${decodeError.message}`);
-            console.warn(`[OLD API] Falling back to latin1 decoding.`);
-            try {
-                subtitleText = iconv.decode(contentBuffer, 'latin1');
-            } catch (fallbackError) {
-                console.error(`[OLD API] Fallback decoding failed: ${fallbackError.message}`);
-                return null;
-            }
-        }
-
-        // 4. Convert to SRT if needed
+        // 3. Convert to SRT if needed
         if (sourceFormat.toLowerCase() !== 'srt') {
             console.log(`[OLD API] Converting subtitle from ${sourceFormat} to srt.`);
             let convertedSrt = null;

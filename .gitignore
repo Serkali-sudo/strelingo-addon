@@ -30,3 +30,7 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+
+# Test files
+test/input/
+test/output/
