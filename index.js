@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Load .env file for local development (optional - containers set env vars directly)
+try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
+
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const { Buffer } = require('buffer');
@@ -11,6 +14,8 @@ const { createClient } = require('@supabase/supabase-js');
 const { convert: convertWithSubtitleConverter } = require('subtitle-converter');
 const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
+const fs = require('fs').promises;
+const path = require('path');
 
 const languageMap = {
     'abk': 'Abkhazian', 'afr': 'Afrikaans', 'alb': 'Albanian', 'amh': 'Amharic', 'ara': 'Arabic',
@@ -89,6 +94,8 @@ const OPENSUBS_API_URL = 'https://rest.opensubtitles.org';
 
 // Configuration
 const ADDON_PORT = process.env.PORT || 7000;
+const LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR; // If set, enables local file storage
+const EXTERNAL_URL = process.env.EXTERNAL_URL || `http://localhost:${ADDON_PORT}`; // External URL for subtitle access
 
 // Rate limiting fully removed
 
@@ -1106,14 +1113,32 @@ process.on('SIGINT', () => {
                             console.error(`Supabase Storage upload failed for v${version}: ${supabaseUploadError.message}`);
                              // Log error, don't add to final results if both failed
                         }
-                    } else if (!uploadUrl && !supabase) {
-                        // This case handles when Vercel was skipped/failed AND Supabase isn't configured
-                         console.warn(`Skipping upload for v${version}: Vercel Blob skipped or failed, and Supabase client is not initialized.`);
-                    } else if (uploadUrl && !uploadedToVercel && skipVercelBlob) {
-                         // This case handles when Vercel was skipped but Supabase succeeded (already logged)
-                         console.log(`Upload for v${version} completed via Supabase (Vercel was skipped).`);
-                    } // Else: Vercel succeeded, no need for Supabase.
-                    
+                    }
+
+                    // Attempt Local Storage if both Vercel and Supabase failed/skipped
+                    if (!uploadUrl && LOCAL_STORAGE_DIR) {
+                        console.log(`Attempting Local Storage upload for v${version}...`);
+                        try {
+                            // Create the local storage directory if it doesn't exist
+                            await fs.mkdir(LOCAL_STORAGE_DIR, { recursive: true });
+
+                            const localFileName = type === 'series' && season && episode
+                                ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                                : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
+                            const localFilePath = path.join(LOCAL_STORAGE_DIR, localFileName);
+
+                            // Write the subtitle file to local storage
+                            await fs.writeFile(localFilePath, mergedSrtString, 'utf-8');
+
+                            // Generate URL using external URL (supports remote access)
+                            uploadUrl = `${EXTERNAL_URL}/subtitles/${localFileName}`;
+                            console.log(`Uploaded v${version} to Local Storage: ${uploadUrl}`);
+                            subtitleEntryId += '-local';
+                        } catch (localStorageError) {
+                            console.error(`Local Storage upload failed for v${version}: ${localStorageError.message}`);
+                        }
+                    }
+
                     // Add to results if an upload was successful
                     if (uploadUrl) {
                          finalSubtitles.push({
@@ -1145,7 +1170,65 @@ process.on('SIGINT', () => {
         });
 
         // --- Start Server (Inside IIFE) ---
-        serveHTTP(builder.getInterface(), { port: ADDON_PORT });
+        const addonInterface = builder.getInterface();
+
+        // If local storage is enabled, set up static file serving
+        if (LOCAL_STORAGE_DIR) {
+            const express = require('express');
+            const getRouter = require('stremio-addon-sdk/src/getRouter');
+            const landingTemplate = require('stremio-addon-sdk/src/landingTemplate');
+
+            const app = express();
+
+            // Enable CORS for all routes
+            app.use((req, res, next) => {
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.setHeader('Access-Control-Allow-Headers', '*');
+                next();
+            });
+
+            // Serve subtitle files from the local storage directory - BEFORE addon routes
+            app.use('/subtitles', express.static(LOCAL_STORAGE_DIR, {
+                setHeaders: (res, filepath) => {
+                    if (filepath.endsWith('.srt')) {
+                        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
+                    }
+                }
+            }));
+
+            // Mount addon router (this handles manifest, resources, etc.)
+            app.use(getRouter(addonInterface));
+
+            // Landing page
+            const landingHTML = landingTemplate(addonInterface.manifest);
+            const hasConfig = !!(addonInterface.manifest.config || []).length;
+
+            app.get('/', (_, res) => {
+                if (hasConfig) {
+                    res.redirect('/configure');
+                } else {
+                    res.setHeader('content-type', 'text/html');
+                    res.end(landingHTML);
+                }
+            });
+
+            if (hasConfig) {
+                app.get('/configure', (_, res) => {
+                    res.setHeader('content-type', 'text/html');
+                    res.end(landingHTML);
+                });
+            }
+
+            // Start server
+            app.listen(ADDON_PORT, () => {
+                console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
+                console.log(`Local storage enabled at: ${LOCAL_STORAGE_DIR}`);
+                console.log(`Subtitle files served at: ${EXTERNAL_URL}/subtitles/`);
+            });
+        } else {
+            // Use default serveHTTP if local storage is not enabled
+            serveHTTP(addonInterface, { port: ADDON_PORT });
+        }
 
     } catch (err) {
         console.error("Failed to import srt-parser-2 or setup addon:", err);
