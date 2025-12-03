@@ -26,7 +26,7 @@ or visit the addon page here:
 *   Fetches subtitles from OpenSubtitles.
 *   Automatically detects the best available subtitles for two selected languages.
 *   Handles Gzip compressed subtitles.
-*   **Robust encoding detection:** Handles UTF-16 LE/BE (with BOM), double-encoded BOMs, legacy encodings (Windows-1251, ISO-8859-x), and repairs double-encoded UTF-8 text.
+*   **Robust encoding detection:** Handles UTF-16 LE/BE (with BOM), double-encoded BOMs, legacy encodings (Windows-1251, ISO-8859-x), and repairs double-encoded UTF-8 text (Implemented by @ravisorg).
 *   Merges the main language and translation language subtitles into a single `.srt` file.
 *   Formats the translation line to be *italic* and <font color="yellow">yellow</font> (yellow color doesnt work due to stremio overriding the color of subtitles).
 *   **Auto-detects your browser language** and sets it as the default translation language on first use!
@@ -87,16 +87,6 @@ or visit the addon page here:
 6.  Stremio should open and prompt you to confirm the installation **with your selected configuration**. Click "Install".
 
 The addon is now installed and configured with your chosen languages.
-
-## Auto Language Detection
-
-The addon automatically detects your browser's language and uses it as the default translation language. Here's how it works:
-
-- When you first install the addon, the **Translation Language** field will be automatically set to match your browser's language settings.
-- This is detected from your browser's `Accept-Language` HTTP header.
-- Supported languages: English, Spanish, French, German, Italian, Portuguese, Russian, Japanese, Korean, Chinese (and 40+ more languages).
-- If your browser language is not supported, the addon will default to English.
-- You can always manually change the translation language in the addon settings at any time.
 
 ## Testing
 
