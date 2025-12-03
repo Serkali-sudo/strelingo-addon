@@ -4,7 +4,8 @@
   "description": "Stremio addon (Strelingo) for dual language subtitles using OpenSubtitles",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node test/encoding.test.js"
   },
   "dependencies": {
     "axios": "^1.9.0",

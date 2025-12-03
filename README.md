@@ -26,7 +26,7 @@ or visit the addon page here:
 *   Fetches subtitles from OpenSubtitles.
 *   Automatically detects the best available subtitles for two selected languages.
 *   Handles Gzip compressed subtitles.
-*   Detects and decodes various character encodings (using `chardet` and `iconv-lite`) to support languages with special characters.
+*   **Robust encoding detection:** Handles UTF-16 LE/BE (with BOM), double-encoded BOMs, legacy encodings (Windows-1251, ISO-8859-x), and repairs double-encoded UTF-8 text.
 *   Merges the main language and translation language subtitles into a single `.srt` file.
 *   Formats the translation line to be *italic* and <font color="yellow">yellow</font> (yellow color doesnt work due to stremio overriding the color of subtitles).
 *   **Auto-detects your browser language** and sets it as the default translation language on first use!
@@ -97,6 +97,19 @@ The addon automatically detects your browser's language and uses it as the defau
 - Supported languages: English, Spanish, French, German, Italian, Portuguese, Russian, Japanese, Korean, Chinese (and 40+ more languages).
 - If your browser language is not supported, the addon will default to English.
 - You can always manually change the translation language in the addon settings at any time.
+
+## Testing
+
+Run encoding tests to verify subtitle decoding works correctly across 40+ languages:
+
+```bash
+npm test                              # Run all tests
+node test/encoding.test.js --output   # Save decoded files to test/output/
+node test/download-inputs.js          # Re-download all test inputs
+node test/download-inputs.js tt123456 # Download specific movie
+```
+
+Tests validate that decoded subtitles contain expected native-language strings (not just English). To add a new test movie, edit `test/movies.js`.
 
 ## Technical Details
 
