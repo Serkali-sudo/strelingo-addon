@@ -12,11 +12,43 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { decodeSubtitleBuffer } = require('../encoding');
 const movies = require('./movies');
 
 const INPUTS_DIR = path.join(__dirname, 'inputs');
 const OUTPUT_DIR = path.join(__dirname, 'output');
+
+// === Known Bad Inputs ===
+// IMPORTANT: Files should ONLY be added to known-bad-inputs.json after thorough 
+// investigation proving the input file is genuinely corrupt or unfixable (and 
+// not a bug in encoding detection).
+const KNOWN_BAD_FILE = path.join(__dirname, 'known-bad-inputs.json');
+let knownBadData = null;
+function loadKnownBad() {
+    if (knownBadData !== null) return knownBadData;
+    if (fs.existsSync(KNOWN_BAD_FILE)) {
+        knownBadData = JSON.parse(fs.readFileSync(KNOWN_BAD_FILE, 'utf8'));
+    } else {
+        knownBadData = { hashes: {} };
+    }
+    return knownBadData;
+}
+
+function hashFile(filepath) {
+    const buffer = fs.readFileSync(filepath);
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+/**
+ * Check if a file is a known bad/corrupt input by its hash.
+ * Returns the entry if known bad, null otherwise.
+ */
+function isKnownBad(filepath) {
+    const data = loadKnownBad();
+    const hash = hashFile(filepath);
+    return data.hashes[hash] || null;
+}
 
 const args = process.argv.slice(2);
 const shouldOutput = args.includes('--output') || args.includes('-o');
@@ -45,6 +77,7 @@ async function runTests() {
     let totalPassed = 0;
     let totalFailed = 0;
     let totalSkipped = 0;
+    let totalKnownBad = 0;
 
     for (const movie of movies) {
         console.log(`\n${'='.repeat(50)}`);
@@ -118,20 +151,30 @@ async function runTests() {
                 }
                 totalPassed++;
             } else {
-                let status = `  FAIL: ${fileId} (${sub.language}) - BOM: ${sub.bom}`;
-                if (hasSuspiciousDensity) {
-                    status += ` ⚠️  HIGH LATIN-EXT: ${(legacyDensity * 100).toFixed(1)}%`;
+                // Check if this is a known bad input (by hash)
+                const knownBadEntry = isKnownBad(filepath);
+                if (knownBadEntry) {
+                    console.log(`  KNOWN BAD: ${fileId} (${sub.language}) - ${knownBadEntry.reason}`);
+                    totalKnownBad++;
+                } else {
+	                let status = `  FAIL: ${fileId} (${sub.language}) - BOM: ${sub.bom}`;
+	                if (hasSuspiciousDensity) {
+	                    status += ` ⚠️  HIGH LATIN-EXT: ${(legacyDensity * 100).toFixed(1)}%`;
+	                }
+	                console.log(status);
+                    console.log(`        Expected: ${expectedStrings.join(', ')}`);
+                    console.log(`        Preview: ${decoded.slice(0, 150).replace(/\n/g, ' ')}`);
+                    totalFailed++;
                 }
-                console.log(status);
-                console.log(`        Expected: ${expectedStrings.join(', ')}`);
-                console.log(`        Preview: ${decoded.slice(0, 150).replace(/\n/g, ' ')}`);
-                totalFailed++;
             }
         }
     }
 
     console.log(`\n${'='.repeat(50)}`);
     let resultsLine = `Results: ${totalPassed} passed, ${totalFailed} failed`;
+    if (totalKnownBad > 0) {
+        resultsLine += `, ${totalKnownBad} known bad`;
+    }
     if (totalSkipped > 0) {
         resultsLine += `, ${totalSkipped} skipped`;
     }

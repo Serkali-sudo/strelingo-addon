@@ -1,0 +1,20 @@
+{
+  "_warning": "Do not manually edit this file, use mark-bad-input.js instead. These are genuinely corrupt inputs that have been properly investigated, encoding bugs MUST NOT be listed here.",
+  "hashes": {
+    "837bf28c6f54016c64e858d52738375fde39b72f7e8e0c3d0bd2c74204743d7d": {
+      "reason": "Corrupt encoding: file contains mixed Arabic UTF-8 byte sequences with Latin-1 chars - not valid Bulgarian Windows-1251 or UTF-8",
+      "markedAt": "2025-12-04T17:05:33.313Z",
+      "originalFile": "tt0133093/bg_3_subf2m.raw"
+    },
+    "207ab0c165cf77b7d69402638ea463ef425168bfea64e392eb2135702261bc43": {
+      "reason": "Mislabeled content: file contains Romanian text despite being labeled as Russian",
+      "markedAt": "2025-12-04T17:05:38.925Z",
+      "originalFile": "tt0133093/ru_2_subf2m.raw"
+    },
+    "b9444a03f15a2e8e3f4d7c1200acbbf08df5dd61f6e97fe51b069f55d4cf594c": {
+      "reason": "Mislabeled content: file contains Romanian text despite being labeled as Russian",
+      "markedAt": "2025-12-04T17:05:43.776Z",
+      "originalFile": "tt1630029/ru_1_subf2m.raw"
+    }
+  }
+}
