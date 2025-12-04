@@ -407,7 +407,10 @@ async function refreshOpensubtitlesCookie(force = false) {
 // --- SRT Parsing and Merging Helpers ---
 
 // Fetches subtitle content from URL (handles encoding detection)
-async function fetchSubtitleContent(url, sourceFormat = 'srt') {
+// @param {string} url - URL to fetch
+// @param {string} sourceFormat - Format hint (default: 'srt')
+// @param {string} languageCode - Language code (3-letter ISO 639-3) for encoding detection
+async function fetchSubtitleContent(url, sourceFormat = 'srt', languageCode = null) {
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await axios.get(url, {
@@ -422,12 +425,13 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt') {
         // - It checks for BOMs first (definitive when present), then falls back to chardet
         // - It handles double-encoded UTF-16 BOMs (common issue with subtitle APIs)
         // - It applies fixCharacterEncodings() to repair double-encoded UTF-8 text
+        // - Language hint helps prioritize correct codepage (e.g., win1253 for Greek)
         // - Single source of truth for encoding logic across all subtitle sources
         //
         // The function handles: UTF-16 LE/BE (with BOM), double-encoded BOMs,
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
-        const subtitleText = decodeSubtitleBuffer(buffer);
+        const subtitleText = decodeSubtitleBuffer(buffer, languageCode);
 
         console.log(`Successfully fetched subtitle: ${url}`);
         return subtitleText;
@@ -442,7 +446,12 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt') {
 }
 
 // Fetches subtitle content from old API (handles encoding detection and format conversion)
-async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = null, isRetry = false) {
+// @param {string} url - URL to fetch
+// @param {string} sourceFormat - Format hint (default: 'srt')
+// @param {string} cookie - Authentication cookie
+// @param {boolean} isRetry - Whether this is a retry attempt
+// @param {string} languageCode - Language code (3-letter ISO 639-3) for encoding detection
+async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = null, isRetry = false, languageCode = null) {
     console.log(`[OLD API] Fetching subtitle content from: ${url}`);
     try {
         const headers = {
@@ -488,12 +497,13 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
         // - It checks for BOMs first (definitive when present), then falls back to chardet
         // - It handles double-encoded UTF-16 BOMs (common issue with subtitle APIs)
         // - It applies fixCharacterEncodings() to repair double-encoded UTF-8 text
+        // - Language hint helps prioritize correct codepage (e.g., win1253 for Greek)
         // - Single source of truth for encoding logic across all subtitle sources
         //
         // The function handles: UTF-16 LE/BE (with BOM), double-encoded BOMs,
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
-        subtitleText = decodeSubtitleBuffer(contentBuffer);
+        subtitleText = decodeSubtitleBuffer(contentBuffer, languageCode);
 
         // 3. Convert to SRT if needed
         if (sourceFormat.toLowerCase() !== 'srt') {
@@ -541,7 +551,7 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
         if (error.response && (error.response.status === 403 || error.response.status === 404) && !isRetry) {
             console.warn(`[OLD API] Got ${error.response.status} error for ${url}. Forcing cookie refresh and retrying once...`);
             const newCookie = await refreshOpensubtitlesCookie(true); // Force refresh
-            return await fetchSubtitleContentOldAPI(url, sourceFormat, newCookie, true); // Retry
+            return await fetchSubtitleContentOldAPI(url, sourceFormat, newCookie, true, languageCode); // Retry
         }
 
         console.error(`[OLD API] Error fetching subtitle content from ${url}:`, error.message);
@@ -934,11 +944,12 @@ process.on('SIGINT', () => {
                     console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, Downloads=${mainSubInfo.downloads}`);
                     
                     // Use old API fetch if format is not SRT (indicates old API source)
+                    // Pass mainLang for encoding detection hints
                     let mainSubContent;
                     if (mainSubInfo.format && mainSubInfo.format.toLowerCase() !== 'srt') {
-                        mainSubContent = await fetchSubtitleContentOldAPI(mainSubInfo.url, mainSubInfo.format, cookie);
+                        mainSubContent = await fetchSubtitleContentOldAPI(mainSubInfo.url, mainSubInfo.format, cookie, false, mainLang);
                     } else {
-                        mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format);
+                        mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainLang);
                     }
                     if (!mainSubContent) {
                         console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
@@ -972,11 +983,12 @@ process.on('SIGINT', () => {
                     console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
                     // Use old API fetch if format is not SRT (indicates old API source)
+                    // Pass transLang for encoding detection hints
                     let transSubContent;
                     if (transSubInfo.format && transSubInfo.format.toLowerCase() !== 'srt') {
-                        transSubContent = await fetchSubtitleContentOldAPI(transSubInfo.url, transSubInfo.format, cookie);
+                        transSubContent = await fetchSubtitleContentOldAPI(transSubInfo.url, transSubInfo.format, cookie, false, transLang);
                     } else {
-                        transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format);
+                        transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transLang);
                     }
                     if (!transSubContent) {
                         console.warn(`Failed to fetch content for translation v${version}. Skipping.`);

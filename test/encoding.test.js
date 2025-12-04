@@ -78,7 +78,19 @@ async function runTests() {
             }
 
             const buffer = fs.readFileSync(filepath);
-            const decoded = decodeSubtitleBuffer(buffer, true);
+
+            // Extract language code from filename (e.g., "th_2_subf2m.raw" → "th")
+            const languageMatch = sub.filename.match(/^([a-z]{2})_/);
+            const languageHint = languageMatch ? languageMatch[1] : null;
+
+            const decoded = decodeSubtitleBuffer(buffer, languageHint, true);
+
+            // Sanity check: Latin Extended density should be low after proper decoding
+            // High density (>10%) of chars in U+0080-U+00FF range suggests mojibake
+            const legacyMojibake = /[\u0080-\u00FF]/g;
+            const legacyMatches = (decoded.match(legacyMojibake) || []).length;
+            const legacyDensity = decoded.length > 0 ? legacyMatches / decoded.length : 0;
+            const hasSuspiciousDensity = legacyDensity > 0.10 && legacyMatches > 50;
 
             // Save decoded output if requested
             if (shouldOutput) {
@@ -92,14 +104,25 @@ async function runTests() {
             const foundStrings = expectedStrings.filter(s => decoded.includes(s));
             const success = expectedStrings.length === 0 || foundStrings.length > 0;
 
+            // File identifier for output (includes movie ID for clarity)
+            const fileId = `${movie.id}/${sub.filename}`;
+
             if (success) {
-                console.log(`  PASS: ${sub.filename} (${sub.language}) - BOM: ${sub.bom}`);
+                let status = `  PASS: ${fileId} (${sub.language}) - BOM: ${sub.bom}`;
+                if (hasSuspiciousDensity) {
+                    status += ` ⚠️  HIGH LATIN-EXT: ${(legacyDensity * 100).toFixed(1)}%`;
+                }
+                console.log(status);
                 if (foundStrings.length > 0) {
                     console.log(`        Found: ${foundStrings.join(', ')}`);
                 }
                 totalPassed++;
             } else {
-                console.log(`  FAIL: ${sub.filename} (${sub.language}) - BOM: ${sub.bom}`);
+                let status = `  FAIL: ${fileId} (${sub.language}) - BOM: ${sub.bom}`;
+                if (hasSuspiciousDensity) {
+                    status += ` ⚠️  HIGH LATIN-EXT: ${(legacyDensity * 100).toFixed(1)}%`;
+                }
+                console.log(status);
                 console.log(`        Expected: ${expectedStrings.join(', ')}`);
                 console.log(`        Preview: ${decoded.slice(0, 150).replace(/\n/g, ' ')}`);
                 totalFailed++;
@@ -108,7 +131,11 @@ async function runTests() {
     }
 
     console.log(`\n${'='.repeat(50)}`);
-    console.log(`Results: ${totalPassed} passed, ${totalFailed} failed, ${totalSkipped} skipped`);
+    let resultsLine = `Results: ${totalPassed} passed, ${totalFailed} failed`;
+    if (totalSkipped > 0) {
+        resultsLine += `, ${totalSkipped} skipped`;
+    }
+    console.log(resultsLine);
 
     if (shouldOutput) {
         console.log(`\nDecoded files saved to: ${OUTPUT_DIR}`);
