@@ -652,7 +652,9 @@ function mergeSubtitles(mainSubs, transSubs, mergeThresholdMs = 500) {
         });
         // console.log("After main sanitize:", cleanMainText.substring(0, 50));
         // Flatten main text by replacing newlines with spaces
-        const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ');
+        const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
+
+        let mergedText = flatMainText;
         if (bestMatchIndex !== -1) {
             const bestTransSub = transSubs[bestMatchIndex];
             // console.log("Before trans sanitize:", bestTransSub.text.substring(0, 50));
@@ -662,20 +664,19 @@ function mergeSubtitles(mainSubs, transSubs, mergeThresholdMs = 500) {
             });
             // console.log("After trans sanitize:", cleanTransText.substring(0, 50));
             // Flatten translation text by replacing newlines with spaces
-            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ');
-
-            mergedSubs.push({
-                ...mainSub, // Keep main timing and ID
-                // Combine flattened texts with a newline, keeping translation italic
-                text: `${flatMainText}\n<i>${flatTransText}</i>`
-            });
-        } else {
-            // If no suitable translation match found, add the main subtitle as is (also flattened)
-            mergedSubs.push({
-                 ...mainSub,
-                 text: flatMainText
-            });
+            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
+            if (flatTransText) {
+                mergedText = (flatMainText + '\n<i>' + flatTransText + '</i>').trim();
+            }
         }
+
+        // Skip empty cues
+        if (!mergedText) continue;
+
+        mergedSubs.push({
+            ...mainSub,
+            text: mergedText
+        });
     }
     console.log(`Finished merging. Result has ${mergedSubs.length} entries.`);
     return mergedSubs;
