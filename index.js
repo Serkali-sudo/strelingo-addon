@@ -105,6 +105,8 @@ const builder = new addonBuilder({
     name: 'Strelingo - Dual Language Subtitles',
     description: 'Provides dual subtitles (main + translation) from OpenSubtitles for language learning. <br><a href="https://github.com/Serkali-sudo/strelingo-addon" style="color: #1E90FF;">GitHub</a>',
     resources: ['subtitles'],
+    // Request video hash/size/filename from Stremio for better subtitle matching
+    subtitleExtra: ['videoHash', 'videoSize', 'filename'],
     types: ['movie', 'series'],
     idPrefixes: ['tt'],
     logo: 'https://raw.githubusercontent.com/Serkali-sudo/strelingo-addon/refs/heads/main/assets/strelingo_icon.jpg',
@@ -159,10 +161,18 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}, needs
     // Build the new API URL
     const imdbId = `tt${baseSearchParams.imdbid}`;
     let apiUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${imdbId}`;
-    
-    // Add series parameters if available
+
+    // Add series parameters if available, or a hash for movies
+    // NOTE: Adding ANY value after a colon triggers the full OpenSubtitles API backend
+    // (subs-v1.strem.io) instead of the limited indexed backend (subs5.strem.io).
+    // Without this, many subtitles are missing - e.g., Matrix has 27 vs 572 results.
     if (type === 'series' && baseSearchParams.season && baseSearchParams.episode) {
         apiUrl += `:${baseSearchParams.season}:${baseSearchParams.episode}`;
+    } else {
+        // Use real video hash if provided by Stremio, otherwise use dummy hash
+        // Real hash enables better subtitle matching; dummy hash just triggers full API
+        // Verified: Matrix 27→572, Endgame 95→430, Avatar 97→277 subtitles
+        apiUrl += `:${videoParams.videoHash || '0'}`;
     }
     
     // Build query parameters for better subtitle matching
