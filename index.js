@@ -268,10 +268,37 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}, needs
 }
 
 // Helper to filter and format subtitles by language
+// Languages with multiple ISO 639-2 codes (bibliographic B / terminological T)
+// When user selects either code, match both in results
+const languageAliases = {
+    'alb': ['alb', 'sqi'], 'sqi': ['alb', 'sqi'],  // Albanian
+    'arm': ['arm', 'hye'], 'hye': ['arm', 'hye'],  // Armenian
+    'baq': ['baq', 'eus'], 'eus': ['baq', 'eus'],  // Basque
+    'bur': ['bur', 'mya'], 'mya': ['bur', 'mya'],  // Burmese
+    'chi': ['chi', 'zho'], 'zho': ['chi', 'zho'],  // Chinese
+    'cze': ['cze', 'ces'], 'ces': ['cze', 'ces'],  // Czech
+    'dut': ['dut', 'nld'], 'nld': ['dut', 'nld'],  // Dutch
+    'fre': ['fre', 'fra'], 'fra': ['fre', 'fra'],  // French
+    'geo': ['geo', 'kat'], 'kat': ['geo', 'kat'],  // Georgian
+    'ger': ['ger', 'deu'], 'deu': ['ger', 'deu'],  // German
+    'gre': ['gre', 'ell'], 'ell': ['gre', 'ell'],  // Greek
+    'ice': ['ice', 'isl'], 'isl': ['ice', 'isl'],  // Icelandic
+    'mac': ['mac', 'mkd'], 'mkd': ['mac', 'mkd'],  // Macedonian
+    'may': ['may', 'msa'], 'msa': ['may', 'msa'],  // Malay
+    'mao': ['mao', 'mri'], 'mri': ['mao', 'mri'],  // Maori
+    'per': ['per', 'fas'], 'fas': ['per', 'fas'],  // Persian
+    'rum': ['rum', 'ron'], 'ron': ['rum', 'ron'],  // Romanian
+    'slo': ['slo', 'slk'], 'slk': ['slo', 'slk'],  // Slovak
+    'tib': ['tib', 'bod'], 'bod': ['tib', 'bod'],  // Tibetan
+    'wel': ['wel', 'cym'], 'cym': ['wel', 'cym'],  // Welsh
+};
+
 function filterSubtitlesByLanguage(allSubtitles, languageId) {
     if (!allSubtitles) return null;
-    
-    const langSubs = allSubtitles.filter(sub => sub.lang === languageId);
+
+    // Check for language aliases (e.g., Romanian: rum/ron)
+    const codesToMatch = languageAliases[languageId] || [languageId];
+    const langSubs = allSubtitles.filter(sub => codesToMatch.includes(sub.lang));
     
     if (langSubs.length === 0) {
         console.log(`No subtitles found for language ${languageId}.`);
