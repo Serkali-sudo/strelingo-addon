@@ -1,5 +1,5 @@
 /**
- * Download subtitle test inputs from Wyzie.
+ * Download subtitle test inputs from OpenSubtitles v3 API (same source as production).
  * Downloads ALL available languages at once (much faster than one-by-one).
  * Saves raw bytes to preserve encoding issues for testing.
  *
@@ -13,24 +13,48 @@ const fs = require('fs');
 const path = require('path');
 const movies = require('./movies');
 
+// Create axios instance with timing interceptors
+const http = axios.create();
+
+// Add timing data to each request
+http.interceptors.request.use((config) => {
+    config.metadata = { startTime: Date.now() };
+    return config;
+});
+
+http.interceptors.response.use(
+    (response) => {
+        const endTime = Date.now();
+        response.timing = {
+            totalMs: endTime - response.config.metadata.startTime
+        };
+        return response;
+    },
+    (error) => {
+        if (error.config?.metadata?.startTime) {
+            error.timing = {
+                totalMs: Date.now() - error.config.metadata.startTime
+            };
+        }
+        return Promise.reject(error);
+    }
+);
+
+function formatMs(ms) {
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+}
+
 const INPUTS_DIR = path.join(__dirname, 'inputs');
 const MAX_PER_LANG = 3;  // Max subtitles per language
 const DOWNLOAD_TIMEOUT = 10000;  // 10s timeout per download
 const MAX_RETRIES = 2;  // Max retries per subtitle
 
+// OpenSubtitles v3 API (same as production)
+const OPENSUBTITLES_API = 'https://opensubtitles-v3.strem.io/subtitles';
+
 // Parse command line for specific movie ID
 const targetId = process.argv[2];
-
-function detectBOM(buffer) {
-    if (buffer.length < 2) return 'none';
-    if (buffer.length >= 4 && buffer[0] === 0xC3 && buffer[1] === 0xBF && buffer[2] === 0xC3 && buffer[3] === 0xBE) return 'double-encoded-utf16le';
-    if (buffer.length >= 4 && buffer[0] === 0xC3 && buffer[1] === 0xBE && buffer[2] === 0xC3 && buffer[3] === 0xBF) return 'double-encoded-utf16be';
-    if (buffer[0] === 0xFF && buffer[1] === 0xFE) return 'utf16le';
-    if (buffer[0] === 0xFE && buffer[1] === 0xFF) return 'utf16be';
-    if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) return 'utf8-bom';
-    if (buffer.length >= 6 && buffer[0] === 0xC3 && buffer[1] === 0xAF && buffer[2] === 0xC2 && buffer[3] === 0xBB) return 'double-encoded-utf8-bom';
-    return 'none';
-}
 
 async function downloadMovie(movie) {
     console.log(`\n${'='.repeat(60)}`);
@@ -42,17 +66,29 @@ async function downloadMovie(movie) {
         fs.mkdirSync(movieDir, { recursive: true });
     }
 
-    // Fetch ALL subtitles at once (no language filter)
-    console.log(`\nFetching all available subtitles...`);
-    const searchUrl = `https://sub.wyzie.ru/search?id=${movie.id}&source=all`;
+    // Build API URL (same format as production)
+    // For movies: add :0 dummy hash to trigger full OpenSubtitles results
+    // For series: season:episode already has colons, which triggers full results
+    const type = movie.type === 'series' ? 'series' : 'movie';
+    let searchUrl;
+
+    if (type === 'series' && movie.season && movie.episode) {
+        searchUrl = `${OPENSUBTITLES_API}/${type}/${movie.id}:${movie.season}:${movie.episode}.json`;
+    } else {
+        // Add :0 dummy hash for movies to get full results
+        searchUrl = `${OPENSUBTITLES_API}/${type}/${movie.id}:0.json`;
+    }
+
+    console.log(`\nFetching subtitles from: ${searchUrl}`);
 
     let allSubs;
     try {
-        const response = await axios.get(searchUrl, { timeout: 120000 });
-        allSubs = response.data;
-        console.log(`Found ${allSubs.length} total subtitles`);
+        const response = await http.get(searchUrl, { timeout: 120000 });
+        allSubs = response.data?.subtitles || [];
+        console.log(`Found ${allSubs.length} total subtitles (${formatMs(response.timing.totalMs)})`);
     } catch (err) {
-        console.error(`Search failed: ${err.message}`);
+        const timing = err.timing ? ` after ${formatMs(err.timing.totalMs)}` : '';
+        console.error(`Search failed${timing}: ${err.message}`);
         return;
     }
 
@@ -61,10 +97,10 @@ async function downloadMovie(movie) {
         return;
     }
 
-    // Group by language
+    // Group by language (API uses 3-letter 'lang' field)
     const byLang = {};
     for (const sub of allSubs) {
-        const lang = sub.language || 'unknown';
+        const lang = sub.lang || 'unknown';
         if (!byLang[lang]) byLang[lang] = [];
         byLang[lang].push(sub);
     }
@@ -74,7 +110,6 @@ async function downloadMovie(movie) {
     const manifest = {
         imdbId: movie.id,
         name: movie.name,
-        downloadedAt: new Date().toISOString(),
         subtitles: []
     };
 
@@ -85,20 +120,21 @@ async function downloadMovie(movie) {
         for (let i = 0; i < toDownload.length; i++) {
             const subInfo = toDownload[i];
             const safeLang = lang.replace(/[\/\\]/g, '-');
-            const filename = `${safeLang}_${i + 1}_${subInfo.source || 'unknown'}.raw`;
+            const filename = `${safeLang}_${i + 1}_opensubtitles.raw`;
             downloadQueue.push({
                 lang,
                 safeLang,
                 filename,
                 filepath: path.join(movieDir, filename),
                 url: subInfo.url,
-                source: subInfo.source,
+                source: 'opensubtitles',
+                apiObject: subInfo,  // Full API response object for this subtitle
                 retries: 0
             });
         }
     }
 
-    console.log(`Downloading ${downloadQueue.length} subtitles...\n`);
+    console.log(`Downloading ${downloadQueue.length} subtitles (limiting results to a max of ${MAX_PER_LANG} subtitles per language)...\n`);
 
     // Process queue with retry logic
     let successCount = 0;
@@ -108,7 +144,7 @@ async function downloadMovie(movie) {
         const item = downloadQueue.shift();
 
         try {
-            const response = await axios.get(item.url, {
+            const response = await http.get(item.url, {
                 responseType: 'arraybuffer',
                 timeout: DOWNLOAD_TIMEOUT
             });
@@ -121,20 +157,24 @@ async function downloadMovie(movie) {
                 language: item.lang,
                 source: item.source,
                 size: buffer.length,
-                bom: detectBOM(buffer),
-                expectedStrings: movie.expectedStrings[item.lang] || []
+                downloadedAt: new Date().toISOString(),
+                url: item.url,
+                responseHeaders: response.headers,
+                apiObject: item.apiObject,
+                downloadTimeMs: response.timing.totalMs
             });
 
-            console.log(`  ✓ ${item.lang}: ${item.filename} (${buffer.length} bytes)`);
+            console.log(`  ✓ ${item.lang}: ${item.filename} (${buffer.length} bytes, ${formatMs(response.timing.totalMs)})`);
             successCount++;
         } catch (err) {
+            const timing = err.timing ? ` in ${formatMs(err.timing.totalMs)}` : '';
             if (item.retries < MAX_RETRIES) {
                 item.retries++;
-                console.log(`  ⟳ ${item.lang}: ${item.filename} - ${err.message} (retry ${item.retries}/${MAX_RETRIES})`);
+                console.log(`  ⟳ ${item.lang}: ${item.filename} - ${err.message}${timing} (retry ${item.retries}/${MAX_RETRIES})`);
                 // Add back to end of queue for retry
                 downloadQueue.push(item);
             } else {
-                console.log(`  ✗ ${item.lang}: ${item.filename} - ${err.message} (gave up after ${MAX_RETRIES} retries)`);
+                console.log(`  ✗ ${item.lang}: ${item.filename} - ${err.message}${timing} (gave up after ${MAX_RETRIES} retries)`);
                 failCount++;
             }
         }
