@@ -3,7 +3,7 @@
 // Load .env file for local development (optional - containers set env vars directly)
 try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
 
-const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
+const { addonBuilder } = require('stremio-addon-sdk');
 const axios = require('axios');
 const { Buffer } = require('buffer');
 const pako = require('pako');
@@ -1176,22 +1176,21 @@ process.on('SIGINT', () => {
         // --- Start Server (Inside IIFE) ---
         const addonInterface = builder.getInterface();
 
-        // If local storage is enabled, set up static file serving
+        const express = require('express');
+        const getRouter = require('stremio-addon-sdk/src/getRouter');
+        const landingTemplate = require('./landingTemplate');
+
+        const app = express();
+
+        // Enable CORS for all routes
+        app.use((req, res, next) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Headers', '*');
+            next();
+        });
+
+        // Serve subtitle files from local storage (if enabled) - BEFORE addon routes
         if (LOCAL_STORAGE_DIR) {
-            const express = require('express');
-            const getRouter = require('stremio-addon-sdk/src/getRouter');
-            const landingTemplate = require('stremio-addon-sdk/src/landingTemplate');
-
-            const app = express();
-
-            // Enable CORS for all routes
-            app.use((req, res, next) => {
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.setHeader('Access-Control-Allow-Headers', '*');
-                next();
-            });
-
-            // Serve subtitle files from the local storage directory - BEFORE addon routes
             app.use('/subtitles', express.static(LOCAL_STORAGE_DIR, {
                 setHeaders: (res, filepath) => {
                     if (filepath.endsWith('.srt')) {
@@ -1199,40 +1198,39 @@ process.on('SIGINT', () => {
                     }
                 }
             }));
+        }
 
-            // Mount addon router (this handles manifest, resources, etc.)
-            app.use(getRouter(addonInterface));
+        // Mount addon router (this handles manifest, resources, etc.)
+        app.use(getRouter(addonInterface));
 
-            // Landing page
-            const landingHTML = landingTemplate(addonInterface.manifest);
-            const hasConfig = !!(addonInterface.manifest.config || []).length;
+        // Landing page (using custom template with Install/Install Web/Copy Link buttons)
+        const landingHTML = landingTemplate(addonInterface.manifest);
+        const hasConfig = !!(addonInterface.manifest.config || []).length;
 
-            app.get('/', (_, res) => {
-                if (hasConfig) {
-                    res.redirect('/configure');
-                } else {
-                    res.setHeader('content-type', 'text/html');
-                    res.end(landingHTML);
-                }
-            });
-
+        app.get('/', (_, res) => {
             if (hasConfig) {
-                app.get('/configure', (_, res) => {
-                    res.setHeader('content-type', 'text/html');
-                    res.end(landingHTML);
-                });
+                res.redirect('/configure');
+            } else {
+                res.setHeader('content-type', 'text/html');
+                res.end(landingHTML);
             }
+        });
 
-            // Start server
-            app.listen(ADDON_PORT, () => {
-                console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
+        if (hasConfig) {
+            app.get('/configure', (_, res) => {
+                res.setHeader('content-type', 'text/html');
+                res.end(landingHTML);
+            });
+        }
+
+        // Start server
+        app.listen(ADDON_PORT, () => {
+            console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
+            if (LOCAL_STORAGE_DIR) {
                 console.log(`Local storage enabled at: ${LOCAL_STORAGE_DIR}`);
                 console.log(`Subtitle files served at: ${EXTERNAL_URL}/subtitles/`);
-            });
-        } else {
-            // Use default serveHTTP if local storage is not enabled
-            serveHTTP(addonInterface, { port: ADDON_PORT });
-        }
+            }
+        });
 
     } catch (err) {
         console.error("Failed to import srt-parser-2 or setup addon:", err);
