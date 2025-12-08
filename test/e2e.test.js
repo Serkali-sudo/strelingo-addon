@@ -27,11 +27,28 @@ const SUBTITLES_DIR = process.env.LOCAL_STORAGE_DIR
     : null;
 
 // Test data - use movies from movies.js dynamically
+// Language pairs designed to test different character set combinations for merge validation:
+// - Latin: ASCII + accented chars (eng, spa, por, fra) - 1 byte ASCII, 2-byte accents in UTF-8
+// - 2-byte scripts: Cyrillic (rus), Greek (ell), Hebrew (heb), Arabic (ara) - 2 bytes in UTF-8
+// - 3-byte scripts: CJK (zht, jpn, kor), Thai (tha) - 3 bytes in UTF-8
 const LANGUAGE_PAIRS = [
-    { main: 'eng', trans: 'spa', name: 'English + Spanish' },
-    { main: 'eng', trans: 'rus', name: 'English + Russian' },
-    { main: 'ara', trans: 'zht', name: 'Arabic + Chinese' },
-    { main: 'eng', trans: 'heb', name: 'English + Hebrew' },
+    // 1. Latin + Latin: English + Spanish (both ASCII with accented chars)
+    { main: 'eng', trans: 'spa', name: 'English + Spanish (Latin+Latin)' },
+
+    // 2. Non-English Latin + Non-English Latin: Portuguese + French
+    { main: 'por', trans: 'fre', name: 'Portuguese + French (Latin+Latin)' },
+
+    // 3. English + 2-byte: English + Russian (Cyrillic)
+    { main: 'eng', trans: 'rus', name: 'English + Russian (Latin+Cyrillic)' },
+
+    // 4. Non-English Latin + 2-byte: Spanish + Greek
+    { main: 'spa', trans: 'ell', name: 'Spanish + Greek (Latin+Greek)' },
+
+    // 5. English + 3-byte: English + Chinese (Traditional)
+    { main: 'eng', trans: 'zht', name: 'English + Chinese (Latin+CJK)' },
+
+    // 6. 2-byte + 3-byte: Russian + Japanese
+    { main: 'rus', trans: 'jpn', name: 'Russian + Japanese (Cyrillic+CJK)' },
 ];
 const TEST_MOVIES = movies.filter(m => m.type !== 'series');
 const TEST_SERIES_LIST = movies.filter(m => m.type === 'series');
@@ -249,11 +266,22 @@ async function testUserManifests() {
 async function testSubtitles(userManifests) {
     log('\n=== Subtitle Requests (Movies) ===');
 
-    for (const movie of TEST_MOVIES) {
+    // Distribute language pairs across movies to ensure all charset combinations get tested
+    // Each movie tests 2 pairs, rotating through all pairs across movies
+    const pairsPerMovie = 2;
+
+    for (let movieIdx = 0; movieIdx < TEST_MOVIES.length; movieIdx++) {
+        const movie = TEST_MOVIES[movieIdx];
         log(`\n  ${movie.name} (${movie.id}):`);
 
-        // Test first 2 language pairs per movie
-        for (const { pair, configUrl } of userManifests.slice(0, 2)) {
+        // Calculate which pairs to test for this movie (rotate through all pairs)
+        const startPairIdx = (movieIdx * pairsPerMovie) % userManifests.length;
+        const pairsToTest = [];
+        for (let i = 0; i < pairsPerMovie && i < userManifests.length; i++) {
+            pairsToTest.push(userManifests[(startPairIdx + i) % userManifests.length]);
+        }
+
+        for (const { pair, configUrl } of pairsToTest) {
             const testName = `${movie.name}/${pair.name}`;
             const url = `${BASE_URL}/${configUrl}/subtitles/movie/${movie.id}.json`;
 
