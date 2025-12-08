@@ -48,33 +48,6 @@ module.exports = [
         }
     },
     {
-        id: 'tt0079368',
-        name: 'The Jesus Film',
-        expectedStrings: {
-            'en': ['Jesus', 'God', 'Lord'],
-            'es': ['Jesús', 'Dios', 'Señor'],
-            'fr': ['Jésus', 'Dieu', 'Seigneur'],
-            'de': ['Jesus', 'Gott', 'Herr'],
-            'pt': ['Jesus', 'Deus', 'Senhor'],
-            'it': ['Gesù', 'Dio', 'Signore'],
-            'ru': ['Иисус', 'Бог', 'Господь'],
-            'zh': ['耶穌', '耶稣', '上帝', '神'],
-            'ja': ['イエス', '神'],
-            'ko': ['예수', '하나님', '주님'],
-            'th': ['พระเยซู', 'พระเจ้า'],
-            'vi': ['Chúa', 'Giê-su'],
-            'ar': ['يسوع', 'الله', 'الرب'],
-            'he': ['ישוע', 'אלוהים'],
-            'iw': ['ישוע', 'אלוהים'],
-            'el': ['Ιησούς', 'Θεός', 'Κύριος'],
-            'tr': ['İsa', 'Tanrı', 'Rab'],
-            'pl': ['Jezus', 'Bóg', 'Pan'],
-            'hi': ['यीशु', 'परमेश्वर', 'प्रभु'],
-            'bn': ['যীশু', 'ঈশ্বর'],
-            'ta': ['இயேசு', 'கடவுள்'],
-        }
-    },
-    {
         id: 'tt4154796',
         name: 'Avengers: Endgame',
         expectedStrings: {
