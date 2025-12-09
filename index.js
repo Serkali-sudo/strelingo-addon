@@ -448,6 +448,7 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt', languageCode = nu
             timeout: 15000,
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
+        console.log(`Successfully fetched subtitle: ${url}`);
 
         const buffer = Buffer.from(response.data);
 
@@ -462,8 +463,11 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt', languageCode = nu
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
         const subtitleText = decodeSubtitleBuffer(buffer, languageCode);
+        if (!subtitleText) {
+            console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
+            return null;
+        }
 
-        console.log(`Successfully fetched subtitle: ${url}`);
         return subtitleText;
 
     } catch (error) {
@@ -514,6 +518,7 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
             headers: headers,
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
+        console.log(`Successfully fetched subtitle: ${url}`);
 
         let contentBuffer = Buffer.from(response.data);
         let subtitleText;
@@ -541,6 +546,10 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
         subtitleText = decodeSubtitleBuffer(contentBuffer, languageCode);
+        if (!subtitleText) {
+            console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
+            return null;
+        }
 
         // 3. Convert to SRT if needed
         if (sourceFormat.toLowerCase() !== 'srt') {
