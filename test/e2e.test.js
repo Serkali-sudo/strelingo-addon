@@ -15,7 +15,7 @@ const axios = require('axios');
 const { execSync } = require('child_process');
 const { decodeSubtitleBuffer } = require('../encoding');
 const movies = require('./movies');
-const { validateEncoding, checkDualLanguage, validateSrtFormat } = require('./validators');
+const { validateEncoding, checkDualLanguage, validateSrtFormat, getExpectedStringsForLanguage, checkExpectedStrings } = require('./validators');
 
 // === Configuration ===
 const PROJECT_DIR = path.resolve(__dirname, '..');
@@ -320,6 +320,26 @@ async function testSubtitles(userManifests) {
                 const dual = checkDualLanguage(content);
                 test(`${testName} dual-language`, dual.hasItalics, `(${dual.italicCount} italic, ${srtValidation.cueCount} cues)`);
 
+                // Validate main language content is present
+                const mainExpected = getExpectedStringsForLanguage(movie, pair.main);
+                if (mainExpected.length > 0) {
+                    const mainCheck = checkExpectedStrings(content, mainExpected);
+                    test(`${testName} main lang strings`, mainCheck.success,
+                        `missing: ${mainCheck.missing.join(', ')}`);
+                } else {
+                    fail(`${testName} main lang strings`, `no expected strings defined for ${pair.main}`);
+                }
+
+                // Validate translation language content is present
+                const transExpected = getExpectedStringsForLanguage(movie, pair.trans);
+                if (transExpected.length > 0) {
+                    const transCheck = checkExpectedStrings(content, transExpected);
+                    test(`${testName} trans lang strings`, transCheck.success,
+                        `missing: ${transCheck.missing.join(', ')}`);
+                } else {
+                    fail(`${testName} trans lang strings`, `no expected strings defined for ${pair.trans}`);
+                }
+
             } catch (e) {
                 fail(`${testName} request`, e.message);
             }
@@ -363,6 +383,26 @@ async function testSeries(userManifests) {
                 // Check dual-language format
                 const dual = checkDualLanguage(content);
                 test(`${testName} dual-language`, dual.hasItalics, `(${dual.italicCount} italic, ${srtValidation.cueCount} cues)`);
+
+                // Validate main language content is present
+                const mainExpected = getExpectedStringsForLanguage(series, pair.main);
+                if (mainExpected.length > 0) {
+                    const mainCheck = checkExpectedStrings(content, mainExpected);
+                    test(`${testName} main lang strings`, mainCheck.success,
+                        `missing: ${mainCheck.missing.join(', ')}`);
+                } else {
+                    fail(`${testName} main lang strings`, `no expected strings defined for ${pair.main}`);
+                }
+
+                // Validate translation language content is present
+                const transExpected = getExpectedStringsForLanguage(series, pair.trans);
+                if (transExpected.length > 0) {
+                    const transCheck = checkExpectedStrings(content, transExpected);
+                    test(`${testName} trans lang strings`, transCheck.success,
+                        `missing: ${transCheck.missing.join(', ')}`);
+                } else {
+                    fail(`${testName} trans lang strings`, `no expected strings defined for ${pair.trans}`);
+                }
             } else {
                 // Get server logs to explain WHY no subtitles
                 const logs = getRecentLogs(series.id);
