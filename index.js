@@ -952,24 +952,7 @@ process.on('SIGINT', () => {
                     console.log('✅ Successfully fetched subtitles using OLD API fallback!');
                 }
                 
-                // 2. Select up to 4 unique translation candidates
-                const selectedTransSubs = [];
-                const usedTransUrls = new Set();
-                for (const transSub of transSubInfoList) {
-                    if (selectedTransSubs.length >= 4) break; // Stop if we have 4
-                    if (!usedTransUrls.has(transSub.url)) {
-                        selectedTransSubs.push(transSub);
-                        usedTransUrls.add(transSub.url);
-                        console.log(`Selected translation candidate #${selectedTransSubs.length}: ID=${transSub.id}, Downloads=${transSub.downloads}, URL=${transSub.url}`);
-                    }
-                }
-
-                if (selectedTransSubs.length === 0) {
-                    console.error("Found translation metadata, but failed to select any unique candidates (this shouldn't happen if list was not empty).");
-                    return { subtitles: [], cacheMaxAge: 60 };
-                }
-
-                // 3. Find a valid main subtitle by trying each one from the sorted list
+                // 2. Find a valid main subtitle by trying each one from the sorted list
                 let mainParsed = null;
                 let selectedMainSubInfo = null;
                 for (const mainSubInfo of mainSubInfoList) {
@@ -1007,11 +990,17 @@ process.on('SIGINT', () => {
                     return { subtitles: [], cacheMaxAge: 60 };
                 }
 
-                // 4. Process Each Selected Translation Subtitle with the valid main subtitle
+                // 3. Process translation candidates until we have 4 successful results
                 const finalSubtitles = [];
-                for (let i = 0; i < selectedTransSubs.length; i++) {
-                    const transSubInfo = selectedTransSubs[i];
-                    const version = i + 1;
+                const usedTransUrls = new Set();
+
+                for (const transSubInfo of transSubInfoList) {
+                    if (finalSubtitles.length >= 4) break;
+
+                    if (usedTransUrls.has(transSubInfo.url)) continue;
+                    usedTransUrls.add(transSubInfo.url);
+
+                    const version = finalSubtitles.length + 1;
                     console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
                     // Use old API fetch if format is not SRT (indicates old API source)
