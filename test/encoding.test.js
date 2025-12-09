@@ -104,11 +104,18 @@ async function runTests() {
             const languageMatch = sub.filename.match(/^([a-z]{2,3})_/);
             const languageHint = languageMatch ? languageMatch[1] : null;
 
-            // Decode with skipLanguageValidation to always get text (even if wrong language)
-            const decoded = decodeSubtitleBuffer(buffer, languageHint, { skipLanguageValidation: true });
-
             // File identifier for output (includes movie ID for clarity)
             const fileId = `${movie.id}/${sub.filename}`;
+
+            // Check if this language code should be skipped entirely
+            if (languageHint && SKIP_LANGUAGE_CODES.includes(languageHint.toLowerCase())) {
+                console.log(`  SKIPPED: ${fileId} (${sub.language}) - language code '${languageHint}' in skip list`);
+                totalSkipped++;
+                continue;
+            }
+
+            // Decode with skipLanguageValidation to always get text (even if wrong language)
+            const decoded = decodeSubtitleBuffer(buffer, languageHint, { skipLanguageValidation: true });
 
             // Check if this is a known bad input first (by hash)
             const knownBadEntry = isKnownBad(filepath);

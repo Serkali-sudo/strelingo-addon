@@ -73,7 +73,8 @@ const ISO639_3_TO_1 = {
     'tgl': 'tl', 'tha': 'th', 'vie': 'vi',
 
     // East Asian variants
-    'zht': 'zh', 'zhc': 'zh', 'zhe': 'zh',
+    'zht': 'zh', 'zhc': 'zh',  // Note: 'zhe' (bilingual Chinese-English) intentionally omitted
+
     // Central Asian languages
     'kaz': 'kk', 'kir': 'ky', 'mon': 'mn', 'tuk': 'tk', 'uzb': 'uz',
 
@@ -871,6 +872,12 @@ function decodeSubtitleBuffer(buffer, languageHint = null, options = {}) {
     }
 
     const log = silent ? () => {} : console.log.bind(console);
+
+    // Check if this language code should be skipped entirely
+    if (languageHint && SKIP_LANGUAGE_CODES.includes(languageHint.toLowerCase())) {
+        log(`[ENCODING] Skipping '${languageHint}' - language code is in skip list`);
+        return null;
+    }
 
     // Normalize language hint to 2-letter code (accepts both 2 and 3 letter codes)
     languageHint = normalizeLanguageCode(languageHint);
