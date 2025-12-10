@@ -789,7 +789,7 @@ process.on('SIGINT', () => {
 });
 
 // --- Main Async IIFE to handle ESM import and setup ---
-(async () => {
+const initPromise = (async () => {
     try {
         // Dynamically import the ESM module
         const { default: SRTParser2 } = await import('srt-parser-2');
@@ -1281,18 +1281,26 @@ process.on('SIGINT', () => {
         }
 
         // Start server
-        app.listen(ADDON_PORT, () => {
-            console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
-            if (LOCAL_STORAGE_DIR) {
-                console.log(`Local storage enabled at: ${LOCAL_STORAGE_DIR}`);
-                console.log(`Subtitle files served at: ${EXTERNAL_URL}/subtitles/`);
-            }
-        });
+        if (process.env.IS_CLOUDFLARE_WORKERS) {
+            console.log("Cloudflare Workers environment detected. Skipping app.listen().");
+            Object.assign(module.exports, { addonInterface, landingHTML });
+        } else {
+            app.listen(ADDON_PORT, () => {
+                console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
+                if (LOCAL_STORAGE_DIR) {
+                    console.log(`Local storage enabled at: ${LOCAL_STORAGE_DIR}`);
+                    console.log(`Subtitle files served at: ${EXTERNAL_URL}/subtitles/`);
+                }
+            });
+        }
 
-    } catch (err) {
-        console.error("Failed to import srt-parser-2 or setup addon:", err);
+    } catch (err) {        console.error("Failed to import srt-parser-2 or setup addon:", err);
         process.exit(1); // Exit if essential import fails
     }
 })();
+
+if (process.env.IS_CLOUDFLARE_WORKERS) {
+    module.exports = { builder, initPromise };
+}
 
 console.log("Addon script initialized. Waiting for ESM import and server start..."); // Log outside IIFE 
