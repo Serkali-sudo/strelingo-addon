@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Load .env file for local development (optional - containers set env vars directly)
-if (!process.env.IS_CLOUDFLARE_WORKERS) {
+if (typeof process !== 'undefined' && process.env && !process.env.IS_CLOUDFLARE_WORKERS) {
     try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
 }
 
@@ -18,8 +18,12 @@ const path = require('path');
 const { fixCharacterEncodings, decodeSubtitleBuffer } = require('./encoding');
 
 let fs;
-if (!process.env.IS_CLOUDFLARE_WORKERS) {
-    fs = require('fs').promises;
+if (typeof process !== 'undefined' && process.env && !process.env.IS_CLOUDFLARE_WORKERS) {
+    try {
+        fs = require('fs').promises;
+    } catch (e) {
+        // fs not available
+    }
 }
 
 const languageMap = {
@@ -1245,7 +1249,7 @@ const initPromise = (async () => {
         const hasConfig = !!(addonInterface.manifest.config || []).length;
 
         // Start server
-        if (process.env.IS_CLOUDFLARE_WORKERS) {
+        if (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS) {
             console.log("Cloudflare Workers environment detected. Skipping Express setup.");
             Object.assign(module.exports, { addonInterface, landingHTML });
         } else {
@@ -1305,7 +1309,7 @@ const initPromise = (async () => {
     }
 })();
 
-if (process.env.IS_CLOUDFLARE_WORKERS) {
+if (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS) {
     module.exports = { builder, initPromise };
 }
 
