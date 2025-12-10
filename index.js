@@ -1,23 +1,39 @@
 #!/usr/bin/env node
 
+// --- Early mocks for Cloudflare Workers to avoid Node-only deps pulled transitively (express/body-parser/raw-body/iconv-lite) ---
+if (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS) {
+    try {
+        const Module = require('module');
+        const originalRequire = Module.prototype.require;
+        Module.prototype.require = function (id) {
+            if (id === 'express' || id === 'body-parser' || id === 'raw-body') {
+                return {};
+            }
+            if (id === 'iconv-lite') {
+                return {
+                    decode: (buffer, encoding = 'utf-8') => {
+                        try {
+                            return new TextDecoder(encoding).decode(buffer);
+                        } catch (e) {
+                            return new TextDecoder('utf-8').decode(buffer);
+                        }
+                    },
+                    encodingExists: () => true
+                };
+            }
+            return originalRequire.apply(this, arguments);
+        };
+    } catch (e) {
+        // If Module patching fails, continue; nodejs_compat may still shim some deps.
+    }
+}
+
 // Load .env file for local development (optional - containers set env vars directly)
 if (typeof process !== 'undefined' && process.env && !process.env.IS_CLOUDFLARE_WORKERS) {
     try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
 }
 
 const { addonBuilder } = require('stremio-addon-sdk');
-
-// Mock express and body-parser for Workers environment to prevent deep requirement issues
-if (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS) {
-    const Module = require('module');
-    const originalRequire = Module.prototype.require;
-    Module.prototype.require = function(id) {
-        if (id === 'express' || id === 'body-parser') {
-            return {};
-        }
-        return originalRequire.apply(this, arguments);
-    };
-}
 const axios = require('axios');
 const { Buffer } = require('buffer');
 const pako = require('pako');
