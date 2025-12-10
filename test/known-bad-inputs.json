@@ -1,0 +1,35 @@
+{
+  "_warning": "Do not manually edit this file, use mark-bad-input.js instead. These are genuinely corrupt inputs that have been properly investigated, encoding bugs MUST NOT be listed here.",
+  "hashes": {
+    "837bf28c6f54016c64e858d52738375fde39b72f7e8e0c3d0bd2c74204743d7d": {
+      "reason": "Corrupt encoding: file contains mixed Arabic UTF-8 byte sequences with Latin-1 chars - not valid Bulgarian Windows-1251 or UTF-8",
+      "markedAt": "2025-12-04T17:05:33.313Z",
+      "originalFile": "tt0133093/bg_3_subf2m.raw"
+    },
+    "207ab0c165cf77b7d69402638ea463ef425168bfea64e392eb2135702261bc43": {
+      "reason": "Mislabeled content: file contains Romanian text despite being labeled as Russian",
+      "markedAt": "2025-12-04T17:05:38.925Z",
+      "originalFile": "tt0133093/ru_2_subf2m.raw"
+    },
+    "b9444a03f15a2e8e3f4d7c1200acbbf08df5dd61f6e97fe51b069f55d4cf594c": {
+      "reason": "Mislabeled content: file contains Romanian text despite being labeled as Russian",
+      "markedAt": "2025-12-04T17:05:43.776Z",
+      "originalFile": "tt1630029/ru_1_subf2m.raw"
+    },
+    "cf1e2057308b180729dc3456f7dbefb21de1a013202c97336ca639c633a612f5": {
+      "reason": "Source file corruption: 3,537 UTF-8 replacement characters (U+FFFD) baked into raw bytes from OpenSubtitles",
+      "markedAt": "2025-12-07T20:33:02.328Z",
+      "originalFile": "tt0133093/kur_1_opensubtitles.raw"
+    },
+    "3ddb94a8d03fa48698616e8454ee7fe157f1d7c480cf1f7f011bbed44956f8b4": {
+      "reason": "Source file corruption: 1 UTF-8 replacement character (U+FFFD) at end of file from OpenSubtitles",
+      "markedAt": "2025-12-07T20:33:01.720Z",
+      "originalFile": "tt4154796/hin_2_opensubtitles.raw"
+    },
+    "e808e016c8fbccd3873a7aecbce66b9a4f7bf3eab857eed4d56271d5ee53f81f": {
+      "reason": "Source file corruption: 14,751 UTF-8 replacement characters (U+FFFD) baked into raw bytes from OpenSubtitles - encoding beyond repair",
+      "markedAt": "2025-12-07T20:33:37.278Z",
+      "originalFile": "tt0133093/tha_2_opensubtitles.raw"
+    }
+  }
+}

@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "node test/encoding.test.js"
+    "test": "node test/encoding.test.js && node test/e2e.test.js",
+    "test:encoding": "node test/encoding.test.js",
+    "test:e2e": "node test/e2e.test.js"
   },
   "dependencies": {
     "axios": "^1.9.0",

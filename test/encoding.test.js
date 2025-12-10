@@ -12,55 +12,75 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { decodeSubtitleBuffer } = require('../encoding');
 const movies = require('./movies');
+const { checkMojibake, checkExpectedStrings, getExpectedStringsForLanguage, hasReplacementChars } = require('./validators');
+const ensureInputs = require('./ensure-inputs');
 
 const INPUTS_DIR = path.join(__dirname, 'inputs');
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
+// === Known Bad Inputs ===
+// IMPORTANT: Files should ONLY be added to known-bad-inputs.json after thorough 
+// investigation proving the input file is genuinely corrupt or unfixable (and 
+// not a bug in encoding detection).
+const KNOWN_BAD_FILE = path.join(__dirname, 'known-bad-inputs.json');
+let knownBadData = null;
+function loadKnownBad() {
+    if (knownBadData !== null) return knownBadData;
+    if (fs.existsSync(KNOWN_BAD_FILE)) {
+        knownBadData = JSON.parse(fs.readFileSync(KNOWN_BAD_FILE, 'utf8'));
+    } else {
+        knownBadData = { hashes: {} };
+    }
+    return knownBadData;
+}
+
+function hashFile(filepath) {
+    const buffer = fs.readFileSync(filepath);
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+/**
+ * Check if a file is a known bad/corrupt input by its hash.
+ * Returns the entry if known bad, null otherwise.
+ */
+function isKnownBad(filepath) {
+    const data = loadKnownBad();
+    const hash = hashFile(filepath);
+    return data.hashes[hash] || null;
+}
+
 const args = process.argv.slice(2);
 const shouldOutput = args.includes('--output') || args.includes('-o');
-
-async function ensureInputsExist(movie) {
-    const movieDir = path.join(INPUTS_DIR, movie.id);
-    const manifestPath = path.join(movieDir, 'manifest.json');
-
-    if (!fs.existsSync(manifestPath)) {
-        console.log(`Inputs missing for ${movie.name} (${movie.id}), downloading...`);
-
-        // Dynamically run download
-        const { execSync } = require('child_process');
-        execSync(`node "${path.join(__dirname, 'download-inputs.js')}" ${movie.id}`, {
-            stdio: 'inherit',
-            cwd: path.join(__dirname, '..')
-        });
-    }
-
-    return fs.existsSync(manifestPath);
-}
 
 async function runTests() {
     console.log('Running encoding tests...\n');
 
+    // Ensure all test inputs exist (downloads if missing)
+    await ensureInputs();
+
     let totalPassed = 0;
     let totalFailed = 0;
     let totalSkipped = 0;
+    let totalKnownBad = 0;
 
     for (const movie of movies) {
         console.log(`\n${'='.repeat(50)}`);
         console.log(`${movie.name} (${movie.id})`);
         console.log('='.repeat(50));
 
-        // Ensure inputs exist (auto-download if not)
-        const inputsReady = await ensureInputsExist(movie);
-        if (!inputsReady) {
-            console.log(`  SKIP: Could not get inputs for ${movie.id}`);
+        const movieDir = path.join(INPUTS_DIR, movie.id);
+        const manifestPath = path.join(movieDir, 'manifest.json');
+
+        // Skip if manifest doesn't exist (download may have failed)
+        if (!fs.existsSync(manifestPath)) {
+            console.log(`  SKIP: No manifest for ${movie.id}`);
             totalSkipped++;
             continue;
         }
 
-        const movieDir = path.join(INPUTS_DIR, movie.id);
-        const manifestPath = path.join(movieDir, 'manifest.json');
         const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
         // Create output dir if needed
@@ -85,12 +105,10 @@ async function runTests() {
 
             const decoded = decodeSubtitleBuffer(buffer, languageHint, true);
 
-            // Sanity check: Latin Extended density should be low after proper decoding
-            // High density (>10%) of chars in U+0080-U+00FF range suggests mojibake
-            const legacyMojibake = /[\u0080-\u00FF]/g;
-            const legacyMatches = (decoded.match(legacyMojibake) || []).length;
-            const legacyDensity = decoded.length > 0 ? legacyMatches / decoded.length : 0;
-            const hasSuspiciousDensity = legacyDensity > 0.10 && legacyMatches > 50;
+            // Encoding quality checks using shared validators
+            const mojibakeCheck = checkMojibake(decoded);
+            const hasSuspiciousDensity = mojibakeCheck.hasMojibake;
+            const hasReplacementCharacters = hasReplacementChars(decoded);
 
             // Save decoded output if requested
             if (shouldOutput) {
@@ -99,39 +117,61 @@ async function runTests() {
                 fs.writeFileSync(outputPath, decoded, 'utf8');
             }
 
-            // Check expected strings
-            const expectedStrings = sub.expectedStrings || [];
-            const foundStrings = expectedStrings.filter(s => decoded.includes(s));
-            const success = expectedStrings.length === 0 || foundStrings.length > 0;
+            // Check expected strings using shared validator
+            // Look up from movies.js by language code (more flexible than manifest)
+            const expectedStrings = getExpectedStringsForLanguage(movie, languageHint);
+            const stringCheck = checkExpectedStrings(decoded, expectedStrings);
+            const success = stringCheck.success;
 
             // File identifier for output (includes movie ID for clarity)
             const fileId = `${movie.id}/${sub.filename}`;
 
-            if (success) {
-                let status = `  PASS: ${fileId} (${sub.language}) - BOM: ${sub.bom}`;
-                if (hasSuspiciousDensity) {
-                    status += ` ⚠️  HIGH LATIN-EXT: ${(legacyDensity * 100).toFixed(1)}%`;
-                }
-                console.log(status);
-                if (foundStrings.length > 0) {
-                    console.log(`        Found: ${foundStrings.join(', ')}`);
+            // Build warning flags
+            const warnings = [];
+            if (hasSuspiciousDensity) {
+                warnings.push(`HIGH LATIN-EXT: ${(mojibakeCheck.density * 100).toFixed(1)}%`);
+            }
+            if (hasReplacementCharacters) {
+                warnings.push('HAS REPLACEMENT CHARS (U+FFFD)');
+            }
+            const warningStr = warnings.length > 0 ? ` ⚠️  ${warnings.join(', ')}` : '';
+
+            if (success && !hasReplacementCharacters) {
+                // Pass: expected strings found and no hard encoding errors
+                console.log(`  PASS: ${fileId} (${sub.language})${warningStr}`);
+                if (stringCheck.found.length > 0) {
+                    console.log(`        Found: ${stringCheck.found.join(', ')}`);
                 }
                 totalPassed++;
             } else {
-                let status = `  FAIL: ${fileId} (${sub.language}) - BOM: ${sub.bom}`;
-                if (hasSuspiciousDensity) {
-                    status += ` ⚠️  HIGH LATIN-EXT: ${(legacyDensity * 100).toFixed(1)}%`;
+                // Check if this is a known bad input (by hash)
+                const knownBadEntry = isKnownBad(filepath);
+                if (knownBadEntry) {
+                    console.log(`  KNOWN BAD: ${fileId} (${sub.language}) - ${knownBadEntry.reason}`);
+                    totalKnownBad++;
+                } else {
+                    // Fail: missing expected strings OR has replacement characters
+                    const failReasons = [];
+                    if (!success) failReasons.push('expected strings not found');
+                    if (hasReplacementCharacters) failReasons.push('encoding errors (U+FFFD)');
+
+                    console.log(`  FAIL: ${fileId} (${sub.language})${warningStr}`);
+                    console.log(`        Reason: ${failReasons.join(', ')}`);
+                    if (!success) {
+                        console.log(`        Expected: ${expectedStrings.join(', ')}`);
+                    }
+                    console.log(`        Preview: ${decoded.slice(0, 150).replace(/\n/g, ' ')}`);
+                    totalFailed++;
                 }
-                console.log(status);
-                console.log(`        Expected: ${expectedStrings.join(', ')}`);
-                console.log(`        Preview: ${decoded.slice(0, 150).replace(/\n/g, ' ')}`);
-                totalFailed++;
             }
         }
     }
 
     console.log(`\n${'='.repeat(50)}`);
     let resultsLine = `Results: ${totalPassed} passed, ${totalFailed} failed`;
+    if (totalKnownBad > 0) {
+        resultsLine += `, ${totalKnownBad} known bad`;
+    }
     if (totalSkipped > 0) {
         resultsLine += `, ${totalSkipped} skipped`;
     }
