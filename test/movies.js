@@ -196,6 +196,9 @@ module.exports = [
         name: 'The NeverEnding Story',
         expectedStrings: {
             'en': ['Bastian', 'Nothing', 'Atreyu', 'book'],
+            'es': ['Atreyu', 'Bastian', 'está', 'qué'],
+            'pt': ['Bastian', 'Atreyu', 'você', 'não'],
+            'fr': ['Atreyu', 'Bastian', 'vous', 'pas'],
             'hu': ['Bastian', 'Semmi', 'Atreju'],  // Should fail - file is mislabeled
         }
     },
@@ -204,6 +207,9 @@ module.exports = [
         name: 'Lawnmower Man 2: Beyond Cyberspace',
         expectedStrings: {
             'en': ['Jobe', 'cyberspace', 'virtual'],
+            'ru': ['Джоб', 'это', 'что', 'мой'],
+            'es': ['Jobe', 'esto', 'qué', 'para'],
+            'el': ['Τρέις', 'είναι', 'για', 'αυτό'],
             'pl': ['Jobe', 'jest', 'nie'],  // Should fail - file is mislabeled
         }
     },
@@ -214,6 +220,9 @@ module.exports = [
         name: 'Star Wars: Episode VI - Return of the Jedi',
         expectedStrings: {
             'en': ['Luke', 'Vader', 'Jedi', 'Force'],
+            'zh': ['維達', '路克', '絕地', '天行者'],
+            'ru': ['Люк', 'Соло', 'Скайуокер', 'галактик'],
+            'ja': ['ルーク', 'ソロ', 'ジェダイ', 'スカイウォーカー'],
             'th': ['ลุค', 'เวเดอร์', 'เจได'],  // Thai script validation
         }
     },
@@ -222,6 +231,9 @@ module.exports = [
         name: 'Strange Days',
         expectedStrings: {
             'en': ['Lenny', 'Macy', 'Faith'],
+            'es': ['Lenny', 'esto', 'qué', 'para'],
+            'pt': ['Lenny', 'Faith', 'isso', 'você'],
+            'fr': ['Lenny', 'Faith', 'vous', 'pas'],
             'th': ['เลนนี่', 'เมซี่'],  // Thai script validation
         }
     }
