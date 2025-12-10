@@ -4,7 +4,40 @@
  */
 
 const chardet = require('chardet');
-const iconv = require('iconv-lite');
+
+// Check if we are in Cloudflare Workers environment
+const isWorkers = (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS);
+
+let iconv;
+if (!isWorkers) {
+    iconv = require('iconv-lite');
+} else {
+    // In Workers, we might need a polyfill or just fallback to UTF-8/TextDecoder
+    // For now, we'll implement a minimal mock that handles what we can with TextDecoder
+    console.log("Running in Workers: Using limited TextDecoder fallback for iconv-lite");
+    iconv = {
+        decode: (buffer, encoding) => {
+             try {
+                const decoder = new TextDecoder(encoding);
+                return decoder.decode(buffer);
+             } catch (e) {
+                 console.warn(`TextDecoder does not support ${encoding}, falling back to utf-8`);
+                 const utf8Decoder = new TextDecoder('utf-8');
+                 return utf8Decoder.decode(buffer);
+             }
+        },
+        encodingExists: (encoding) => {
+             // TextDecoder supports many encodings, but not all that iconv-lite does
+             // We can be optimistic here or check a list
+             try {
+                 new TextDecoder(encoding);
+                 return true;
+             } catch (e) {
+                 return false;
+             }
+        }
+    };
+}
 
 // Sample size for chardet detection (1KB is enough for accurate detection)
 const CHARDET_SAMPLE_SIZE = 1024;
