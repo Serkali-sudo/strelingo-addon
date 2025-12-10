@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 // Load .env file for local development (optional - containers set env vars directly)
-try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
+if (!process.env.IS_CLOUDFLARE_WORKERS) {
+    try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
+}
 
 const { addonBuilder } = require('stremio-addon-sdk');
 const axios = require('axios');
@@ -12,9 +14,13 @@ const { createClient } = require('@supabase/supabase-js');
 const { convert: convertWithSubtitleConverter } = require('subtitle-converter');
 const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
-const fs = require('fs').promises;
 const path = require('path');
 const { fixCharacterEncodings, decodeSubtitleBuffer } = require('./encoding');
+
+let fs;
+if (!process.env.IS_CLOUDFLARE_WORKERS) {
+    fs = require('fs').promises;
+}
 
 const languageMap = {
     'abk': 'Abkhazian', 'afr': 'Afrikaans', 'alb': 'Albanian', 'amh': 'Amharic', 'ara': 'Arabic',
@@ -1177,7 +1183,7 @@ const initPromise = (async () => {
                     }
 
                     // Attempt Local Storage if both Vercel and Supabase failed/skipped
-                    if (!uploadUrl && LOCAL_STORAGE_DIR) {
+                    if (!uploadUrl && LOCAL_STORAGE_DIR && fs) {
                         console.log(`Attempting Local Storage upload for v${version}...`);
                         try {
                             // Create the local storage directory if it doesn't exist
