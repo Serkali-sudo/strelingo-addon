@@ -968,12 +968,13 @@ process.on('SIGINT', () => {
                     console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, Downloads=${mainSubInfo.downloads}`);
                     
                     // Use old API fetch if format is not SRT (indicates old API source)
-                    // Pass mainLang for encoding detection hints
+                    // Pass the actual language code from API response (not user's requested code)
+                    // This ensures proper encoding detection even when user requested an alias
                     let mainSubContent;
                     if (mainSubInfo.format && mainSubInfo.format.toLowerCase() !== 'srt') {
-                        mainSubContent = await fetchSubtitleContentOldAPI(mainSubInfo.url, mainSubInfo.format, cookie, false, mainLang);
+                        mainSubContent = await fetchSubtitleContentOldAPI(mainSubInfo.url, mainSubInfo.format, cookie, false, mainSubInfo.lang);
                     } else {
-                        mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainLang);
+                        mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang);
                     }
                     if (!mainSubContent) {
                         console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
@@ -1013,12 +1014,13 @@ process.on('SIGINT', () => {
                     console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
                     // Use old API fetch if format is not SRT (indicates old API source)
-                    // Pass transLang for encoding detection hints
+                    // Pass the actual language code from API response (not user's requested code)
+                    // This ensures proper encoding detection even when user requested an alias
                     let transSubContent;
                     if (transSubInfo.format && transSubInfo.format.toLowerCase() !== 'srt') {
-                        transSubContent = await fetchSubtitleContentOldAPI(transSubInfo.url, transSubInfo.format, cookie, false, transLang);
+                        transSubContent = await fetchSubtitleContentOldAPI(transSubInfo.url, transSubInfo.format, cookie, false, transSubInfo.lang);
                     } else {
-                        transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transLang);
+                        transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
                     }
                     if (!transSubContent) {
                         console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
