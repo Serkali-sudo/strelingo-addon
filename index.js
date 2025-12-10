@@ -95,6 +95,7 @@ const OPENSUBS_API_URL = 'https://rest.opensubtitles.org';
 const ADDON_PORT = process.env.PORT || 7000;
 const LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR; // If set, enables local file storage
 const EXTERNAL_URL = process.env.EXTERNAL_URL || `http://localhost:${ADDON_PORT}`; // External URL for subtitle access
+const ADDON_NAME = process.env.ADDON_NAME || 'Strelingo - Dual Language Subtitles'; // Custom addon name for self-hosted instances
 
 // Rate limiting fully removed
 
@@ -102,7 +103,7 @@ const EXTERNAL_URL = process.env.EXTERNAL_URL || `http://localhost:${ADDON_PORT}
 const builder = new addonBuilder({
     id: 'com.serhat.strelingo',
     version: '0.1.2',
-    name: 'Strelingo - Dual Language Subtitles',
+    name: ADDON_NAME,
     description: 'Provides dual subtitles (main + translation) from OpenSubtitles for language learning. <br><a href="https://github.com/Serkali-sudo/strelingo-addon" style="color: #1E90FF;">GitHub</a>',
     resources: ['subtitles'],
     // Request video hash/size/filename from Stremio for better subtitle matching
