@@ -816,7 +816,8 @@ process.on('SIGINT', () => {
                  }
                  // Log the text of the first parsed subtitle entry, if it exists
                  if (subtitles.length > 0) {
-                     console.log(`First parsed subtitle text by SRTParser2: [${subtitles[0].text}]`);
+                     const firstText = subtitles[0].text.replace(/[\r\n]+/g, ' ');
+                     console.log(`First parsed subtitle text by SRTParser2: [${firstText}]`);
                  } else {
                      console.log("SRTParser2 returned an empty array.");
                  }
