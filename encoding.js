@@ -5,6 +5,8 @@
 
 const chardet = require('chardet');
 const iconv = require('iconv-lite');
+const { francAll } = require('franc-all');
+const { iso6393To1 } = require('iso-639-3');
 
 // Sample size for chardet detection (1KB is enough for accurate detection)
 const CHARDET_SAMPLE_SIZE = 1024;
@@ -12,41 +14,171 @@ const CHARDET_SAMPLE_SIZE = 1024;
 /**
  * Map OpenSubtitles 3-letter codes to ISO 639-1 2-letter codes.
  * Used for encoding detection - maps API language codes to script detection codes.
- * Note: This is separate from browserLanguageMap which maps browser locales to API codes.
+ *
+ * Includes BOTH ISO 639-2/B (bibliographic, e.g., 'fre', 'ger') AND
+ * ISO 639-2/T (terminological, e.g., 'fra', 'deu') codes since OpenSubtitles
+ * uses both depending on the source/API.
  */
 const ISO639_3_TO_1 = {
-    // Major world languages
-    'ara': 'ar', 'chi': 'zh', 'eng': 'en', 'fre': 'fr', 'ger': 'de',
-    'hin': 'hi', 'ita': 'it', 'jpn': 'ja', 'kor': 'ko', 'por': 'pt',
-    'rus': 'ru', 'spa': 'es',
-    // European languages
-    'alb': 'sq', 'arm': 'hy', 'aze': 'az', 'baq': 'eu', 'bel': 'be',
-    'bos': 'bs', 'bul': 'bg', 'cat': 'ca', 'cze': 'cs', 'dan': 'da',
-    'dut': 'nl', 'ell': 'el', 'est': 'et', 'fin': 'fi', 'geo': 'ka',
-    'gla': 'gd', 'gle': 'ga', 'glg': 'gl', 'hrv': 'hr', 'hun': 'hu',
-    'ice': 'is', 'lav': 'lv', 'lit': 'lt', 'mac': 'mk', 'mne': 'me',
-    'nor': 'no', 'pol': 'pl', 'rum': 'ro', 'scc': 'sr', 'slo': 'sk',
-    'slv': 'sl', 'swe': 'sv', 'tur': 'tr', 'ukr': 'uk', 'wel': 'cy',
+    // Major world languages - both B and T codes where they differ
+    'ara': 'ar', 'chi': 'zh', 'zho': 'zh',  // Chinese: chi (B) / zho (T)
+    'eng': 'en',
+    'fre': 'fr', 'fra': 'fr',  // French: fre (B) / fra (T)
+    'ger': 'de', 'deu': 'de',  // German: ger (B) / deu (T)
+    'hin': 'hi', 'ita': 'it', 'jpn': 'ja', 'kor': 'ko',
+    'por': 'pt', 'rus': 'ru', 'spa': 'es',
+
+    // European languages - both B and T codes
+    'alb': 'sq', 'sqi': 'sq',  // Albanian: alb (B) / sqi (T)
+    'arm': 'hy', 'hye': 'hy',  // Armenian: arm (B) / hye (T)
+    'aze': 'az',
+    'baq': 'eu', 'eus': 'eu',  // Basque: baq (B) / eus (T)
+    'bel': 'be', 'bos': 'bs', 'bul': 'bg', 'cat': 'ca',
+    'cze': 'cs', 'ces': 'cs',  // Czech: cze (B) / ces (T)
+    'dan': 'da',
+    'dut': 'nl', 'nld': 'nl',  // Dutch: dut (B) / nld (T)
+    'ell': 'el', 'gre': 'el',  // Greek: gre (B) / ell (T)
+    'est': 'et', 'fin': 'fi',
+    'geo': 'ka', 'kat': 'ka',  // Georgian: geo (B) / kat (T)
+    'gla': 'gd', 'gle': 'ga', 'glg': 'gl',
+    'hrv': 'hr', 'hun': 'hu',
+    'ice': 'is', 'isl': 'is',  // Icelandic: ice (B) / isl (T)
+    'lav': 'lv', 'lit': 'lt',
+    'mac': 'mk', 'mkd': 'mk',  // Macedonian: mac (B) / mkd (T)
+    'mne': 'me',
+    'nor': 'no', 'nob': 'no',  // Norwegian Bokmål
+    'pol': 'pl',
+    'rum': 'ro', 'ron': 'ro',  // Romanian: rum (B) / ron (T)
+    'scc': 'sr', 'srp': 'sr',  // Serbian: scc (deprecated) / srp (T)
+    'slo': 'sk', 'slk': 'sk',  // Slovak: slo (B) / slk (T)
+    'slv': 'sl',               // Slovenian
+    'swe': 'sv', 'tur': 'tr', 'ukr': 'uk',
+    'wel': 'cy', 'cym': 'cy',  // Welsh: wel (B) / cym (T)
+
     // Middle Eastern / Arabic script
-    'heb': 'he', 'per': 'fa', 'prs': 'fa', 'pus': 'ps', 'syr': 'sy',
-    'urd': 'ur', 'kur': 'ku',
+    'heb': 'he',
+    'per': 'fa', 'fas': 'fa',  // Persian: per (B) / fas (T)
+    'prs': 'fa',               // Dari (Afghan Persian)
+    'pus': 'ps', 'syr': 'sy', 'urd': 'ur', 'kur': 'ku',
+
     // South Asian languages
     'asm': 'as', 'ben': 'bn', 'guj': 'gu', 'kan': 'kn', 'mal': 'ml',
     'mar': 'mr', 'nep': 'ne', 'ori': 'or', 'pan': 'pa', 'sin': 'si',
     'tam': 'ta', 'tel': 'te',
+
     // Southeast Asian languages
-    'bur': 'my', 'ind': 'id', 'khm': 'km', 'lao': 'lo', 'may': 'ms',
+    'bur': 'my', 'mya': 'my',  // Burmese: bur (B) / mya (T)
+    'ind': 'id', 'khm': 'km', 'lao': 'lo',
+    'may': 'ms', 'msa': 'ms',  // Malay: may (B) / msa (T)
     'tgl': 'tl', 'tha': 'th', 'vie': 'vi',
+
     // East Asian variants
     'zht': 'zh', 'zhc': 'zh', 'zhe': 'zh',
     // Central Asian languages
     'kaz': 'kk', 'kir': 'ky', 'mon': 'mn', 'tuk': 'tk', 'uzb': 'uz',
+
     // African languages
     'afr': 'af', 'amh': 'am', 'hau': 'ha', 'ibo': 'ig', 'som': 'so',
     'swa': 'sw', 'yor': 'yo', 'zul': 'zu',
-    // Variants
-    'pob': 'pt', 'pom': 'pt', 'spl': 'es', 'spn': 'es',
+
+    // Other languages
+    'mao': 'mi', 'mri': 'mi',  // Maori: mao (B) / mri (T)
+    'tib': 'bo', 'bod': 'bo',  // Tibetan: tib (B) / bod (T)
+
+    // Variants / special codes used by OpenSubtitles
+    'pob': 'pt', 'pom': 'pt',  // Brazilian Portuguese variants
+    'spl': 'es', 'spn': 'es',  // Spanish variants
 };
+
+/**
+ * Language code aliases - maps between ISO 639-2/B (bibliographic) and
+ * ISO 639-2/T (terminological) codes. Used when searching for subtitles
+ * to match either code variant.
+ * 
+ * Also include deprecated codes and codes used for subtitles only.
+ *
+ * Format: { code: [all equivalent codes] }
+ * Each code maps to an array of ALL its equivalents (including itself).
+ */
+const LANGUAGE_ALIASES = {
+    'aka': ['aka', 'fat', 'twi'],         // Akan (with fallbacks)
+    'fat': ['fat', 'aka', 'twi'],         // Akan-Fanti (with fallbacks)
+    'twi': ['twi', 'aka', 'fat'],         // Akan-Twi (with fallbacks)
+    'alb': ['alb', 'sqi'],                // Albanian (with fallback)
+    'sqi': ['sqi', 'alb'],                // Albanian (with fallback)
+    'ara': ['ara', 'arb'],                // Arabic (with fallback)
+    'arb': ['arb', 'ara'],                // Arabic (with fallback)
+    'arm': ['arm', 'xcl', 'hye', 'hyw'],  // Armenian (with fallbacks)
+    'xcl': ['xcl', 'arm', 'hye', 'hyw'],  // Armanian-Classical (with fallbacks)
+    'hye': ['hye', 'arm', 'hyw', 'xcl'],  // Armenian-Eastern (with fallbacks)
+    'hyw': ['hyw', 'arm', 'hye', 'xcl'],  // Armenian-Western (with fallbacks)
+    'baq': ['baq', 'eus'],                // Basque (with fallback)
+    'eus': ['eus', 'baq'],                // Basque (with fallback)
+    'bur': ['bur', 'mya'],                // Burmese (with fallback)
+    'mya': ['mya', 'bur'],                // Burmese (with fallback)
+    'chi': ['chi', 'zho'],                // Chinese (with fallback)
+    'zho': ['zho', 'chi'],                // Chinese (with fallback)
+    'ces': ['ces', 'cze'],                // Czech (with fallback)
+    'cze': ['cze', 'ces'],                // Czech (with fallback)
+    'dut': ['dut', 'nld'],                // Dutch (with fallback)
+    'nld': ['nld', 'dut'],                // Dutch (with fallback)
+    'fil': ['fil', 'tgl'],                // Filipino (Pilipino) (with fallback)
+    'tgl': ['tgl', 'fil'],                // Filipino-Tagalog (with fallback)
+    'fra': ['fra', 'fre'],                // French (with fallback)
+    'fre': ['fre', 'fra'],                // French (with fallback)
+    'geo': ['geo', 'kat'],                // Georgian (with fallback)
+    'kat': ['kat', 'geo'],                // Georgian (with fallback)
+    'deu': ['deu', 'ger'],                // German (with fallback)
+    'ger': ['ger', 'deu'],                // German (with fallback)
+    'ell': ['ell', 'gre'],                // Greek (with fallback)
+    'gre': ['gre', 'ell'],                // Greek (with fallback)
+    'ice': ['ice', 'isl'],                // Icelandic (with fallback)
+    'isl': ['isl', 'ice'],                // Icelandic (with fallback)
+    'ind': ['ind', 'msa', 'may'],         // Indonesian (with fallback)
+    'mac': ['mac', 'mkd'],                // Macedonian (with fallback)
+    'mkd': ['mkd', 'mac'],                // Macedonian (with fallback)
+    'msa': ['msa', 'ind', 'may'],         // Malay (with fallback)
+    'may': ['may', 'ind', 'msa'],         // Malay (with fallback)
+    'mao': ['mao', 'mri'],                // Maori (with fallback)
+    'mri': ['mri', 'mao'],                // Maori (with fallback)
+    'nor': ['nor', 'nob', 'nno'],         // Norwegian (with fallbacks)
+    'nob': ['nob', 'nor', 'nno'],         // Norwegian-Bokmål (with fallbacks)
+    'nno': ['nno', 'nor', 'nob'],         // Norwegian-Nynorsk (with fallbacks)
+    'osd': ['osd', 'oss'],                // Ossetian-Digor (with fallback)
+    'oss': ['oss', 'osd'],                // Ossetian-Ossetic (with fallback)
+    'fas': ['fas', 'per'],                // Persian (with fallback)
+    'per': ['per', 'fas'],                // Persian (with fallback)
+    'ron': ['ron', 'rum', 'mol'],         // Romanian (with fallback)
+    'rum': ['rum', 'ron', 'mol'],         // Romanian (with fallback)
+    'mol': ['mol', 'rum', 'ron'],         // Romanian-Moldavian (with fallback)
+    'scc': ['scc', 'srp'],                // Serbian (with fallback)
+    'srp': ['srp', 'scc'],                // Serbian (with fallback)
+    'slk': ['slk', 'slo'],                // Slovak (with fallback)
+    'slo': ['slo', 'slk'],                // Slovak (with fallback)
+    'bod': ['bod', 'tib'],                // Tibetan (with fallback)
+    'tib': ['tib', 'bod'],                // Tibetan (with fallback)
+    'cym': ['cym', 'wel'],                // Welsh (with fallback)
+    'wel': ['wel', 'cym'],                // Welsh (with fallback)
+    'zhe': ['chi', 'zho']                 // ZHE used to mean misc Chinese + English bilingual → fetch simplified Chinese instead
+};
+
+/**
+ * Get all equivalent language codes for a given code.
+ * Returns an array of all codes that refer to the same language.
+ * @param {string} languageCode - A 3-letter language code
+ * @returns {string[]} Array of equivalent codes (including the input code)
+ */
+function getLanguageAliases(languageCode) {
+    return LANGUAGE_ALIASES[languageCode] || [languageCode];
+}
+
+/**
+ * Language codes that should be skipped entirely.
+ * Add codes here with comments explaining why they should not be processed.
+ */
+const SKIP_LANGUAGE_CODES = [
+    'zhe',  // Pre-merged Chinese-English bilingual - conflicts with addon's purpose of merging separate languages
+];
 
 /**
  * Convert language code to 2-letter ISO 639-1 format for encoding hints.
@@ -59,106 +191,275 @@ function normalizeLanguageCode(lang) {
     const lower = lang.toLowerCase();
     // Already 2-letter
     if (lower.length === 2) return lower;
-    // Convert 3-letter to 2-letter
-    return ISO639_3_TO_1[lower] || null;
+    // Convert 3-letter to 2-letter using:
+    // 1. Our OpenSubtitles-specific codes (ISO639_3_TO_1)
+    // 2. The iso-639-3 library's comprehensive mapping (iso6393To1)
+    return ISO639_3_TO_1[lower] || iso6393To1[lower] || null;
+}
+
+// Skip first N chars to avoid header/metadata poisoning when validating
+const VALIDATION_SKIP_CHARS = 2000;
+// Sample size after skipping - franc needs larger samples for reliable detection
+// "franc supports many languages, which means it's easily confused on small samples"
+const VALIDATION_SAMPLE_SIZE = 30000;
+
+/**
+ * Calculate optimal skip position for validation sampling.
+ * For long files: skip VALIDATION_SKIP_CHARS to avoid headers.
+ * For short files: start earlier to ensure we get content.
+ * @param {number} textLength - Total text length
+ * @returns {number} Position to start sampling from
+ */
+function getValidationSkipPos(textLength) {
+    // For short files, start earlier: max(0, length - sampleSize)
+    // For long files, cap at VALIDATION_SKIP_CHARS
+    return Math.min(VALIDATION_SKIP_CHARS, Math.max(textLength - VALIDATION_SAMPLE_SIZE, 0));
 }
 
 /**
- * Unicode script block ranges for validation.
- * Used to verify that decoded text contains characters from the expected script.
- * Maps 2-letter language codes to regex patterns matching their Unicode script blocks.
+ * Franc library returns ISO 639-3 codes, often with specific varieties/dialects.
+ * We use the iso-639-3 library as the base mapping (ISO 639-3 → ISO 639-1).
+ *
+ * Additional mappings cover:
+ * 1. Individual language codes that map to macrolanguages (khk → mn for Mongolian)
+ * 2. Dialect/variety codes that franc uses (arb → ar for Standard Arabic)
+ * 3. Our legacy OpenSubtitles 3-letter codes from ISO639_3_TO_1
+ *
+ * Note: iso6393To1 from iso-639-3 library has 184 entries, covering most standard codes.
  */
-const SCRIPT_UNICODE_RANGES = {
-    // Greek and Coptic (U+0370-03FF)
-    'el': /[\u0370-\u03FF]/g,
+const FRANC_TO_ISO2 = {
+    // Base: iso-639-3 library's comprehensive ISO 639-3 → ISO 639-1 mapping
+    ...iso6393To1,
 
-    // Cyrillic (U+0400-04FF) - Russian, Ukrainian, Bulgarian, Serbian, etc.
-    'ru': /[\u0400-\u04FF]/g,
-    'uk': /[\u0400-\u04FF]/g,
-    'bg': /[\u0400-\u04FF]/g,
-    'sr': /[\u0400-\u04FF]/g,
-    'mk': /[\u0400-\u04FF]/g,
-    'be': /[\u0400-\u04FF]/g,
-    'kk': /[\u0400-\u04FF]/g,  // Kazakh (Cyrillic)
-    'mn': /[\u0400-\u04FF]/g,  // Mongolian (Cyrillic)
+    // Add our OpenSubtitles-specific codes (bibliographic variants like 'fre' for French)
+    ...ISO639_3_TO_1,
 
-    // Hebrew (U+0590-05FF)
-    'he': /[\u0590-\u05FF]/g,
-    'iw': /[\u0590-\u05FF]/g,  // Old ISO 639 code for Hebrew
+    // Individual language → macrolanguage mappings (franc returns these)
+    'khk': 'mn',   // Khalkha Mongolian → Mongolian (macrolanguage)
+    'arb': 'ar',   // Standard Arabic → Arabic (macrolanguage)
+    'cmn': 'zh',   // Mandarin Chinese → Chinese (macrolanguage)
+    'yue': 'zh',   // Cantonese → Chinese
+    'nan': 'zh',   // Min Nan → Chinese
+    'wuu': 'zh',   // Wu Chinese → Chinese
+    'pes': 'fa',   // Western Farsi → Persian
+    'prs': 'fa',   // Dari → Persian
+    'zlm': 'ms',   // Malay (generic) → Malay
+    'zsm': 'ms',   // Standard Malay → Malay
+    'ekk': 'et',   // Standard Estonian → Estonian
+    'lvs': 'lv',   // Standard Latvian → Latvian
+    'uzn': 'uz',   // Northern Uzbek → Uzbek
+    'uzs': 'uz',   // Southern Uzbek → Uzbek
 
-    // Arabic script (U+0600-06FF) - Arabic, Persian, Urdu, Kurdish, Pashto, etc.
-    'ar': /[\u0600-\u06FF]/g,
-    'fa': /[\u0600-\u06FF]/g,  // Persian
-    'ur': /[\u0600-\u06FF]/g,  // Urdu
-    'ku': /[\u0600-\u06FF]/g,  // Kurdish (Arabic script)
-    'ps': /[\u0600-\u06FF]/g,  // Pashto
-    'sd': /[\u0600-\u06FF]/g,  // Sindhi
+    // Norwegian varieties
+    'nno': 'no',   // Norwegian Nynorsk → Norwegian
+    'nob': 'no',   // Norwegian Bokmål → Norwegian
 
-    // Syriac (U+0700-074F)
-    'sy': /[\u0700-\u074F]/g,
+    // Legacy/alternate codes that franc might return
+    'src': 'sr',   // Serbian (alternate code)
 
-    // Thai (U+0E00-0E7F)
-    'th': /[\u0E00-\u0E7F]/g,
+    // Montenegrin (no ISO 639-1 code, but essentially same as Serbian/Croatian/Bosnian)
+    'cnr': 'me',   // Montenegrin → 'me' (unofficial but widely used)
 
-    // Georgian (U+10A0-10FF)
-    'ka': /[\u10A0-\u10FF]/g,
+    // Albanian dialects → Albanian
+    'als': 'sq',   // Tosk Albanian → Albanian
+    'aln': 'sq',   // Gheg Albanian → Albanian
 
-    // Armenian (U+0530-058F)
-    'hy': /[\u0530-\u058F]/g,
-
-    // Devanagari (U+0900-097F) - Hindi, Marathi, Nepali, Sanskrit
-    'hi': /[\u0900-\u097F]/g,
-    'mr': /[\u0900-\u097F]/g,
-    'ne': /[\u0900-\u097F]/g,
-
-    // Bengali (U+0980-09FF)
-    'bn': /[\u0980-\u09FF]/g,
-
-    // Gurmukhi/Punjabi (U+0A00-0A7F)
-    'pa': /[\u0A00-\u0A7F]/g,
-
-    // Gujarati (U+0A80-0AFF)
-    'gu': /[\u0A80-\u0AFF]/g,
-
-    // Tamil (U+0B80-0BFF)
-    'ta': /[\u0B80-\u0BFF]/g,
-
-    // Telugu (U+0C00-0C7F)
-    'te': /[\u0C00-\u0C7F]/g,
-
-    // Kannada (U+0C80-0CFF)
-    'kn': /[\u0C80-\u0CFF]/g,
-
-    // Malayalam (U+0D00-0D7F)
-    'ml': /[\u0D00-\u0D7F]/g,
-
-    // Sinhala (U+0D80-0DFF)
-    'si': /[\u0D80-\u0DFF]/g,
-
-    // Burmese/Myanmar (U+1000-109F)
-    'my': /[\u1000-\u109F]/g,
-
-    // Khmer (U+1780-17FF)
-    'km': /[\u1780-\u17FF]/g,
-
-    // Lao (U+0E80-0EFF)
-    'lo': /[\u0E80-\u0EFF]/g,
-
-    // Tibetan (U+0F00-0FFF)
-    'bo': /[\u0F00-\u0FFF]/g,
-
-    // Ethiopic/Amharic (U+1200-137F)
-    'am': /[\u1200-\u137F]/g,
-
-    // CJK Unified Ideographs (U+4E00-9FFF) + extensions - Chinese
-    'zh': /[\u4E00-\u9FFF\u3400-\u4DBF]/g,
-
-    // Japanese: Hiragana (3040-309F) + Katakana (30A0-30FF) + CJK
-    'ja': /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g,
-
-    // Korean: Hangul Syllables (AC00-D7AF) + Jamo (1100-11FF)
-    'ko': /[\uAC00-\uD7AF\u1100-\u11FF]/g,
+    // English-related varieties (franc sometimes detects these for English text)
+    'pcm': 'en',   // Nigerian Pidgin → English (pidgin based on English)
+    'sco': 'en',   // Scots → English (closely related, often confused)
 };
+
+/**
+ * Related language groups - languages that are so similar that a speaker of one can generally 
+ * understand the other language. We use this for two reasons:
+ * 1. Our language detection isn't always capable of differentiating these, because they're so 
+ *    similar, so we want to accept them as interchangeable replacements.
+ * 2. If a user requests one and it's not available, we can return one that's very similar so they 
+ *    at least get something useful back.
+ * Each language maps to an array of its related languages.
+ * Do not add items here just because they "look" the same or have the same character set! This is
+ * only for nearly interchangeable and bidirectionally understandable languages.
+ */
+const RELATED_LANGUAGES = {
+    // South Slavic (Latin script) - very high mutual intelligibility
+    // Includes Montenegrin ('me') which has no ISO 639-1 but is mutually intelligible
+    'bs': ['hr', 'sr', 'sl', 'me'],   // Bosnian
+    'hr': ['bs', 'sr', 'sl', 'me'],   // Croatian
+    'sr': ['bs', 'hr', 'sl', 'me'],   // Serbian (Latin)
+    'sl': ['bs', 'hr', 'sr', 'me'],   // Slovenian
+    'me': ['bs', 'hr', 'sr', 'sl'],   // Montenegrin
+
+    // West Slavic
+    'cs': ['sk', 'pl'],         // Czech
+    'sk': ['cs', 'pl'],         // Slovak
+    'pl': ['cs', 'sk'],         // Polish
+
+    // Scandinavian
+    'da': ['no', 'sv'],         // Danish
+    'no': ['da', 'sv'],         // Norwegian
+    'sv': ['da', 'no'],         // Swedish
+
+    // Finno-Ugric
+    'fi': ['et'],               // Finnish
+    'et': ['fi'],               // Estonian
+
+    // Iberian/Romance
+    'es': ['pt', 'ca', 'gl'],   // Spanish
+    'pt': ['es', 'gl'],         // Portuguese
+    'ca': ['es', 'oc'],         // Catalan (related to Occitan)
+    'gl': ['es', 'pt'],         // Galician
+    'oc': ['ca'],               // Occitan (related to Catalan)
+
+    // Malay-Indonesian
+    'id': ['ms'],               // Indonesian
+    'ms': ['id'],               // Malay
+
+    // East Slavic (Cyrillic)
+    'ru': ['uk', 'be'],         // Russian
+    'uk': ['ru', 'be'],         // Ukrainian
+    'be': ['ru', 'uk'],         // Belarusian
+};
+
+/**
+ * Get related languages for a given language code.
+ * @param {string} langCode - 2-letter language code
+ * @returns {string[]} Array of related language codes (empty if none)
+ */
+function getRelatedLanguages(langCode) {
+    return RELATED_LANGUAGES[langCode] || [];
+}
+
+/**
+ * Check if decoded text appears clean (not corrupted/garbage).
+ * Used to filter out files with encoding corruption before language detection.
+ *
+ * @param {string} text - The decoded text to check
+ * @param {number} maxReplacementRatio - Max ratio of replacement chars allowed (default 0.01 = 1%)
+ * @returns {boolean} true if text appears clean, false if corrupted
+ */
+function isCleanText(text, maxReplacementRatio = 0.01) {
+    if (!text || text.length < 100) return false;
+
+    // Count replacement characters (U+FFFD) - indicates failed UTF-8 decoding
+    const replacementCount = (text.match(/\uFFFD/g) || []).length;
+
+    // Count control characters (except newline/tab/carriage return)
+    const controlCount = (text.match(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g) || []).length;
+
+    const total = text.length;
+
+    // Reject if too many replacement chars or control chars
+    if (replacementCount / total > maxReplacementRatio) return false;
+    if (controlCount / total > maxReplacementRatio) return false;
+
+    // Check for impossible script mixing (e.g., Hebrew + Thai in same file)
+    // This indicates severe encoding corruption
+    const hasHebrewThai = /[\u0590-\u05FF].*[\u0E00-\u0E7F]|[\u0E00-\u0E7F].*[\u0590-\u05FF]/.test(text);
+    const hasArabicThai = /[\u0600-\u06FF].*[\u0E00-\u0E7F]|[\u0E00-\u0E7F].*[\u0600-\u06FF]/.test(text);
+    const hasCyrillicThai = /[\u0400-\u04FF].*[\u0E00-\u0E7F]|[\u0E00-\u0E7F].*[\u0400-\u04FF]/.test(text);
+
+    if (hasHebrewThai || hasArabicThai || hasCyrillicThai) return false;
+
+    return true;
+}
+
+/**
+ * Detect language using the franc n-gram library.
+ * Franc is ~97%+ accurate on distinguishable languages (and we have the related languages mapping
+ * for the rest).
+ *
+ * @param {string} text - The text to analyze
+ * @param {string|null} expectedLang - Optional expected language (2-letter) for comparison
+ * @returns {Object} { detected: '2-letter code', detected3: 'ISO 639-3 code', isMatch: boolean, isRelatedMatch: boolean }
+ */
+function detectLanguage(text, expectedLang = null) {
+    if (!text || text.length < 100) {
+        return { detected: null, detected3: 'und', isMatch: false, isRelatedMatch: false };
+    }
+
+    // Sample the text (skip headers, take reasonable chunk for analysis)
+    const skipPos = getValidationSkipPos(text.length);
+    let sample = text.slice(skipPos, skipPos + VALIDATION_SAMPLE_SIZE);
+
+    // Clean the sample for language detection:
+    // - Remove SRT timestamps (00:01:23,456 --> 00:01:25,789)
+    // - Remove cue numbers
+    // - Remove HTML tags
+    // This leaves just the dialogue text for franc to analyze
+    sample = sample
+        .replace(/\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3}/g, ' ')  // Timestamps
+        .replace(/^\d+\s*$/gm, '')  // Cue numbers on their own line
+        .replace(/<[^>]+>/g, ' ')   // HTML tags
+        .replace(/\s+/g, ' ')       // Collapse whitespace
+        .trim();
+
+    if (sample.length < 100) {
+        return { detected: null, detected3: 'und', isMatch: false, isRelatedMatch: false };
+    }
+
+    // Run franc-all detection (returns array of [lang, confidence] sorted by confidence)
+    const results = francAll(sample);
+
+    // francAll returns empty array or [['und', 1]] when it can't detect
+    if (!results.length || results[0][0] === 'und') {
+        return { detected: null, detected3: 'und', isMatch: false, isRelatedMatch: false };
+    }
+
+    const detected3 = results[0][0];  // Top result's ISO 639-3 code
+
+    // Convert to 2-letter code using our comprehensive mapping
+    const detected = FRANC_TO_ISO2[detected3] || detected3;
+
+    // Normalize expected language if provided
+    const expected = expectedLang ? (normalizeLanguageCode(expectedLang) || expectedLang.toLowerCase()) : null;
+
+    // Check for exact match
+    const isMatch = expected ? (detected === expected) : false;
+
+    // Check for related language match (South Slavic, Malay-Indonesian, etc.)
+    let isRelatedMatch = isMatch;
+    if (!isMatch && expected) {
+        const relatedToExpected = RELATED_LANGUAGES[expected] || [];
+        const relatedToDetected = RELATED_LANGUAGES[detected] || [];
+
+        // Match if detected is in expected's related list, or vice versa
+        isRelatedMatch = relatedToExpected.includes(detected) || relatedToDetected.includes(expected);
+    }
+
+    return {
+        detected,
+        detected3,
+        isMatch,
+        isRelatedMatch
+    };
+}
+
+/**
+ * Validate that text contains the expected language.
+ * Uses franc n-gram detection with related language matching.
+ *
+ * @param {string} text - The text to validate
+ * @param {string} expectedLang - Expected language code (2 or 3 letter)
+ * @param {Object} options - Optional settings
+ * @param {boolean} options.skipCorruptionCheck - Skip the corruption check (for already-validated text)
+ * @returns {boolean} true if text appears to be in the expected language
+ */
+function validateLanguage(text, expectedLang, options = {}) {
+    if (!text || !expectedLang) return true;  // No validation possible
+
+    const expected = normalizeLanguageCode(expectedLang) || expectedLang.toLowerCase();
+
+    // Check for corruption/garbage first (unless already validated)
+    if (!options.skipCorruptionCheck && !isCleanText(text)) {
+        return false;  // Text is corrupted/garbage
+    }
+
+    // Detect language using franc
+    const detection = detectLanguage(text, expected);
+
+    // Accept if detection says it matches (exact or related language)
+    return detection.isRelatedMatch;
+}
 
 /**
  * Language-to-encoding mapping for legacy subtitle files.
@@ -457,6 +758,7 @@ function fixCharacterEncodings(text, languageHint = null, silent = false) {
                 // Check if this produces valid-looking text:
                 // 1. No replacement characters
                 // 2. Dramatically reduces mojibake patterns
+                // 3. Contains expected script characters OR expected common words
                 if (fixed.includes('\uFFFD')) continue;
 
                 let fixedTotal = 0;
@@ -485,29 +787,12 @@ function fixCharacterEncodings(text, languageHint = null, silent = false) {
         const bytes = Buffer.from(text, 'latin1');
         const codepages = buildCodepageList(languageHint);
 
-        // Get expected Unicode script pattern for this language (if available)
-        const scriptPattern = languageHint ? SCRIPT_UNICODE_RANGES[languageHint.toLowerCase()] : null;
-
         for (const { name, desc } of codepages) {
             try {
                 const fixed = iconv.decode(bytes, name);
                 if (fixed.includes('\uFFFD')) continue;
 
-                // Primary validation: if we have a script pattern, check that the decoded
-                // text contains significant characters from the expected Unicode script block.
-                // This is more reliable than just checking if Latin Extended density dropped.
-                if (scriptPattern) {
-                    const scriptMatches = (fixed.match(scriptPattern) || []).length;
-                    const scriptDensity = fixed.length > 0 ? scriptMatches / fixed.length : 0;
-
-                    // If >15% of decoded text is in expected script, we found the right encoding
-                    if (scriptDensity > 0.15) {
-                        log(`[ENCODING] Fixed as ${desc} (${(scriptDensity * 100).toFixed(1)}% expected script chars)`);
-                        return fixed;
-                    }
-                }
-
-                // Fallback validation: check if Latin Extended density dropped significantly
+                // Check if Latin Extended density dropped significantly
                 const fixedLegacy = (fixed.match(legacyMojibake) || []).length;
                 const fixedDensity = fixed.length > 0 ? fixedLegacy / fixed.length : 0;
 
@@ -570,10 +855,21 @@ function normalizeEncoding(encoding) {
  *
  * @param {Buffer} buffer - The raw subtitle file buffer
  * @param {string|null} languageHint - Optional language code (2 or 3 letter) for encoding hints
- * @param {boolean} silent - If true, don't log messages (for testing)
- * @returns {string} The decoded subtitle text
+ * @param {boolean|Object} options - If boolean: silent mode. If object: { verbose, skipLanguageValidation }
+ * @returns {string|null} The decoded subtitle text, or null if validation fails
  */
-function decodeSubtitleBuffer(buffer, languageHint = null, silent = false) {
+function decodeSubtitleBuffer(buffer, languageHint = null, options = {}) {
+    // Handle legacy boolean argument (silent = true)
+    let silent = false;
+    let skipLanguageValidation = false;
+
+    if (typeof options === 'boolean') {
+        silent = options;  // Legacy: 3rd param was `silent`
+    } else if (typeof options === 'object') {
+        silent = !options.verbose;  // verbose: true → silent: false
+        skipLanguageValidation = options.skipLanguageValidation || false;
+    }
+
     const log = silent ? () => {} : console.log.bind(console);
 
     // Normalize language hint to 2-letter code (accepts both 2 and 3 letter codes)
@@ -671,11 +967,31 @@ function decodeSubtitleBuffer(buffer, languageHint = null, silent = false) {
         subtitleText = subtitleText.slice(3);
     }
 
+    // Final validation: verify text matches expected language using franc detection
+    // Skip this validation if skipLanguageValidation is true (for test analysis)
+    if (languageHint && !skipLanguageValidation) {
+        const langValid = validateLanguage(subtitleText, languageHint, { skipCorruptionCheck: true });
+        if (!langValid) {
+            log(`[ENCODING] Final validation failed: detected language doesn't match expected ${languageHint}. Rejecting.`);
+            return null;
+        }
+    }
+
     return subtitleText;
 }
 
 module.exports = {
     fixCharacterEncodings,
     decodeSubtitleBuffer,
-    normalizeLanguageCode
+    normalizeLanguageCode,
+    detectLanguage,
+    validateLanguage,
+    isCleanText,
+    getLanguageAliases,
+    getRelatedLanguages,
+    SKIP_LANGUAGE_CODES,
+    ISO639_3_TO_1,
+    LANGUAGE_ALIASES,
+    RELATED_LANGUAGES,
+    FRANC_TO_ISO2,
 };

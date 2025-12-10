@@ -13,9 +13,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { decodeSubtitleBuffer } = require('../encoding');
+const { decodeSubtitleBuffer, detectLanguage, validateLanguage, SKIP_LANGUAGE_CODES } = require('../encoding');
 const movies = require('./movies');
-const { checkMojibake, checkExpectedStrings, getExpectedStringsForLanguage, hasReplacementChars } = require('./validators');
+const { checkMojibake, hasReplacementChars } = require('./validators');
 const ensureInputs = require('./ensure-inputs');
 
 const INPUTS_DIR = path.join(__dirname, 'inputs');
@@ -65,6 +65,7 @@ async function runTests() {
     let totalFailed = 0;
     let totalSkipped = 0;
     let totalKnownBad = 0;
+    let totalMislabeled = 0;
 
     for (const movie of movies) {
         console.log(`\n${'='.repeat(50)}`);
@@ -99,16 +100,43 @@ async function runTests() {
 
             const buffer = fs.readFileSync(filepath);
 
-            // Extract language code from filename (e.g., "th_2_subf2m.raw" → "th")
-            const languageMatch = sub.filename.match(/^([a-z]{2})_/);
+            // Extract language code from filename (e.g., "th_2_subf2m.raw" → "th" or "hun_1_bulk.raw" → "hun")
+            const languageMatch = sub.filename.match(/^([a-z]{2,3})_/);
             const languageHint = languageMatch ? languageMatch[1] : null;
 
-            const decoded = decodeSubtitleBuffer(buffer, languageHint, true);
+            // Decode with skipLanguageValidation to always get text (even if wrong language)
+            const decoded = decodeSubtitleBuffer(buffer, languageHint, { skipLanguageValidation: true });
+
+            // File identifier for output (includes movie ID for clarity)
+            const fileId = `${movie.id}/${sub.filename}`;
+
+            // Check if this is a known bad input first (by hash)
+            const knownBadEntry = isKnownBad(filepath);
+            if (knownBadEntry) {
+                console.log(`  KNOWN BAD: ${fileId} (${sub.language}) - ${knownBadEntry.reason}`);
+                totalKnownBad++;
+                continue;
+            }
+
+            // Check for encoding failures (null result or garbage)
+            if (!decoded) {
+                console.log(`  FAIL: ${fileId} (${sub.language}) - decode returned null`);
+                totalFailed++;
+                continue;
+            }
 
             // Encoding quality checks using shared validators
             const mojibakeCheck = checkMojibake(decoded);
             const hasSuspiciousDensity = mojibakeCheck.hasMojibake;
             const hasReplacementCharacters = hasReplacementChars(decoded);
+
+            // Hard fail: replacement characters indicate encoding failure
+            if (hasReplacementCharacters) {
+                console.log(`  FAIL: ${fileId} (${sub.language}) - encoding error (U+FFFD replacement chars)`);
+                console.log(`        Preview: ${decoded.slice(0, 150).replace(/\n/g, ' ')}`);
+                totalFailed++;
+                continue;
+            }
 
             // Save decoded output if requested
             if (shouldOutput) {
@@ -117,58 +145,47 @@ async function runTests() {
                 fs.writeFileSync(outputPath, decoded, 'utf8');
             }
 
-            // Check expected strings using shared validator
-            // Look up from movies.js by language code (more flexible than manifest)
-            const expectedStrings = getExpectedStringsForLanguage(movie, languageHint);
-            const stringCheck = checkExpectedStrings(decoded, expectedStrings);
-            const success = stringCheck.success;
+            // Detect the actual language
+            const detection = detectLanguage(decoded, languageHint);
 
-            // File identifier for output (includes movie ID for clarity)
-            const fileId = `${movie.id}/${sub.filename}`;
+            // Check if content matches expected language using production validation
+            const languageMatches = languageHint
+                ? validateLanguage(decoded, languageHint, { skipCorruptionCheck: true })
+                : true;  // No language hint = accept
 
             // Build warning flags
             const warnings = [];
             if (hasSuspiciousDensity) {
                 warnings.push(`HIGH LATIN-EXT: ${(mojibakeCheck.density * 100).toFixed(1)}%`);
             }
-            if (hasReplacementCharacters) {
-                warnings.push('HAS REPLACEMENT CHARS (U+FFFD)');
-            }
             const warningStr = warnings.length > 0 ? ` ⚠️  ${warnings.join(', ')}` : '';
 
-            if (success && !hasReplacementCharacters) {
-                // Pass: expected strings found and no hard encoding errors
-                console.log(`  PASS: ${fileId} (${sub.language})${warningStr}`);
-                if (stringCheck.found.length > 0) {
-                    console.log(`        Found: ${stringCheck.found.join(', ')}`);
-                }
+            // Check for undetectable language (hard fail - indicates missing mapping)
+            if (!detection.detected) {
+                console.log(`  FAIL: ${fileId} (${sub.language}) - language undetectable (franc returned 'und')${warningStr}`);
+                console.log(`        Preview: ${decoded.slice(2000, 2150).replace(/\n/g, ' ')}`);
+                totalFailed++;
+                continue;
+            }
+
+            if (languageMatches) {
+                // PASS: Content matches expected language
+                console.log(`  PASS: ${fileId} (${sub.language}) - detected ${detection.detected}${warningStr}`);
                 totalPassed++;
             } else {
-                // Check if this is a known bad input (by hash)
-                const knownBadEntry = isKnownBad(filepath);
-                if (knownBadEntry) {
-                    console.log(`  KNOWN BAD: ${fileId} (${sub.language}) - ${knownBadEntry.reason}`);
-                    totalKnownBad++;
-                } else {
-                    // Fail: missing expected strings OR has replacement characters
-                    const failReasons = [];
-                    if (!success) failReasons.push('expected strings not found');
-                    if (hasReplacementCharacters) failReasons.push('encoding errors (U+FFFD)');
-
-                    console.log(`  FAIL: ${fileId} (${sub.language})${warningStr}`);
-                    console.log(`        Reason: ${failReasons.join(', ')}`);
-                    if (!success) {
-                        console.log(`        Expected: ${expectedStrings.join(', ')}`);
-                    }
-                    console.log(`        Preview: ${decoded.slice(0, 150).replace(/\n/g, ' ')}`);
-                    totalFailed++;
-                }
+                // MISLABELED: Content decoded OK but is wrong language
+                console.log(`  MISLABELED: ${fileId} - expected ${sub.language}, detected ${detection.detected} (${detection.detected3})${warningStr}`);
+                console.log(`        Preview: ${decoded.slice(2000, 2150).replace(/\n/g, ' ')}`);
+                totalMislabeled++;
             }
         }
     }
 
     console.log(`\n${'='.repeat(50)}`);
     let resultsLine = `Results: ${totalPassed} passed, ${totalFailed} failed`;
+    if (totalMislabeled > 0) {
+        resultsLine += `, ${totalMislabeled} mislabeled`;
+    }
     if (totalKnownBad > 0) {
         resultsLine += `, ${totalKnownBad} known bad`;
     }

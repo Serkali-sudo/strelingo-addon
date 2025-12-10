@@ -14,7 +14,7 @@ const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
 const fs = require('fs').promises;
 const path = require('path');
-const { fixCharacterEncodings, decodeSubtitleBuffer } = require('./encoding');
+const { decodeSubtitleBuffer, getLanguageAliases } = require('./encoding');
 
 const languageMap = {
     'abk': 'Abkhazian', 'afr': 'Afrikaans', 'alb': 'Albanian', 'amh': 'Amharic', 'ara': 'Arabic',
@@ -269,75 +269,12 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}, needs
 }
 
 // Helper to filter and format subtitles by language
-// Languages with multiple ISO 639-2 codes (bibliographic B / terminological T)
-// When user selects either code, match both in results
-const languageAliases = {
-    'aka': ['aka', 'fat', 'twi'],         // Akan (with fallbacks)
-    'fat': ['fat', 'aka', 'twi'],         // Akan-Fanti (with fallbacks)
-    'twi': ['twi', 'aka', 'fat'],         // Akan-Twi (with fallbacks)
-    'alb': ['alb', 'sqi'],                // Albanian (with fallback)
-    'sqi': ['sqi', 'alb'],                // Albanian (with fallback)
-    'ara': ['ara', 'arb'],                // Arabic (with fallback)
-    'arb': ['arb', 'ara'],                // Arabic (with fallback)
-    'arm': ['arm', 'xcl', 'hye', 'hyw'],  // Armenian (with fallbacks)
-    'xcl': ['xcl', 'arm', 'hye', 'hyw'],  // Armanian-Classical (with fallbacks)
-    'hye': ['hye', 'arm', 'hyw', 'xcl'],  // Armenian-Eastern (with fallbacks)
-    'hyw': ['hyw', 'arm', 'hye', 'xcl'],  // Armenian-Western (with fallbacks)
-    'baq': ['baq', 'eus'],                // Basque (with fallback)
-    'eus': ['eus', 'baq'],                // Basque (with fallback)
-    'bur': ['bur', 'mya'],                // Burmese (with fallback)
-    'mya': ['mya', 'bur'],                // Burmese (with fallback)
-    'chi': ['chi', 'zho'],                // Chinese (with fallback)
-    'zho': ['zho', 'chi'],                // Chinese (with fallback)
-    'ces': ['ces', 'cze'],                // Czech (with fallback)
-    'cze': ['cze', 'ces'],                // Czech (with fallback)
-    'dut': ['dut', 'nld'],                // Dutch (with fallback)
-    'nld': ['nld', 'dut'],                // Dutch (with fallback)
-    'fil': ['fil', 'tgl'],                // Filipino (Pilipino) (with fallback)
-    'tgl': ['tgl', 'fil'],                // Filipino-Tagalog (with fallback)
-    'fra': ['fra', 'fre'],                // French (with fallback)
-    'fre': ['fre', 'fra'],                // French (with fallback)
-    'geo': ['geo', 'kat'],                // Georgian (with fallback)
-    'kat': ['kat', 'geo'],                // Georgian (with fallback)
-    'deu': ['deu', 'ger'],                // German (with fallback)
-    'ger': ['ger', 'deu'],                // German (with fallback)
-    'ell': ['ell', 'gre'],                // Greek (with fallback)
-    'gre': ['gre', 'ell'],                // Greek (with fallback)
-    'ice': ['ice', 'isl'],                // Icelandic (with fallback)
-    'isl': ['isl', 'ice'],                // Icelandic (with fallback)
-    'ind': ['ind', 'msa', 'may'],         // Indonesian (with fallback)
-    'mac': ['mac', 'mkd'],                // Macedonian (with fallback)
-    'mkd': ['mkd', 'mac'],                // Macedonian (with fallback)
-    'msa': ['msa', 'ind', 'may'],         // Malay (with fallback)
-    'may': ['may', 'ind', 'msa'],         // Malay (with fallback)
-    'mao': ['mao', 'mri'],                // Maori (with fallback)
-    'mri': ['mri', 'mao'],                // Maori (with fallback)
-    'nor': ['nor', 'nob', 'nno'],         // Norwegian (with fallbacks)
-    'nob': ['nob', 'nor', 'nno'],         // Norwegian-Bokmål (with fallbacks)
-    'nno': ['nno', 'nor', 'nob'],         // Norwegian-Nynorsk (with fallbacks)
-    'osd': ['osd', 'oss'],                // Ossetian-Digor (with fallback)
-    'oss': ['oss', 'osd'],                // Ossetian-Ossetic (with fallback)
-    'fas': ['fas', 'per'],                // Persian (with fallback)
-    'per': ['per', 'fas'],                // Persian (with fallback)
-    'ron': ['ron', 'rum', 'mol'],         // Romanian (with fallback)
-    'rum': ['rum', 'ron', 'mol'],         // Romanian (with fallback)
-    'mol': ['mol', 'rum', 'ron'],         // Romanian-Moldavian (with fallback)
-    'scc': ['scc', 'srp'],                // Serbian (with fallback)
-    'srp': ['srp', 'scc'],                // Serbian (with fallback)
-    'slk': ['slk', 'slo'],                // Slovak (with fallback)
-    'slo': ['slo', 'slk'],                // Slovak (with fallback)
-    'bod': ['bod', 'tib'],                // Tibetan (with fallback)
-    'tib': ['tib', 'bod'],                // Tibetan (with fallback)
-    'cym': ['cym', 'wel'],                // Welsh (with fallback)
-    'wel': ['wel', 'cym']                 // Welsh (with fallback)
-};
-
 function filterSubtitlesByLanguage(allSubtitles, languageId) {
     if (!allSubtitles) return null;
 
     // Check for language aliases (e.g., Romanian: rum/ron)
-    // The order in the alias array represents preference - first code is most preferred
-    const codesToMatch = languageAliases[languageId] || [languageId];
+    // Uses shared getLanguageAliases() from encoding.js
+    const codesToMatch = getLanguageAliases(languageId);
     const langSubs = allSubtitles.filter(sub => codesToMatch.includes(sub.lang));
 
     if (langSubs.length === 0) {
