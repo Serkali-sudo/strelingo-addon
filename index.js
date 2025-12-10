@@ -6,6 +6,18 @@ if (typeof process !== 'undefined' && process.env && !process.env.IS_CLOUDFLARE_
 }
 
 const { addonBuilder } = require('stremio-addon-sdk');
+
+// Mock express and body-parser for Workers environment to prevent deep requirement issues
+if (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS) {
+    const Module = require('module');
+    const originalRequire = Module.prototype.require;
+    Module.prototype.require = function(id) {
+        if (id === 'express' || id === 'body-parser') {
+            return {};
+        }
+        return originalRequire.apply(this, arguments);
+    };
+}
 const axios = require('axios');
 const { Buffer } = require('buffer');
 const pako = require('pako');

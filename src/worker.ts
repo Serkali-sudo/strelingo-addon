@@ -4,13 +4,11 @@ import indexModule from '../index.js';
 
 export interface Env {
     IS_CLOUDFLARE_WORKERS: string;
-    // Add other bindings here
 }
 
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         // Ensure initialization is complete
-        // Accessing the exported promise from index.js
         if (indexModule.initPromise) {
              await indexModule.initPromise;
         }
@@ -61,7 +59,6 @@ export default {
             if (extraStr) {
                 try {
                     // Stremio extra params parsing
-                    // Usually key=value&key2=value2
                     const params = new URLSearchParams(extraStr);
                     for(const [k, v] of params) {
                         extra[k] = v;
@@ -98,4 +95,3 @@ export default {
         return new Response('Not Found', { status: 404, headers: corsHeaders });
     }
 };
-
