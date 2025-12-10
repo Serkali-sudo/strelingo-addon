@@ -279,7 +279,7 @@ const FRANC_TO_ISO2 = {
  *    at least get something useful back.
  * Each language maps to an array of its related languages.
  * Do not add items here just because they "look" the same or have the same character set! This is
- * only for nearly interchangeable and bidirectionally understandable languages.
+ * only for nearly interchangeable and bidirectionally understandable written languages.
  */
 const RELATED_LANGUAGES = {
     // South Slavic (Latin script) - very high mutual intelligibility
@@ -291,34 +291,24 @@ const RELATED_LANGUAGES = {
     'me': ['bs', 'hr', 'sr', 'sl'],   // Montenegrin
 
     // West Slavic
-    'cs': ['sk', 'pl'],         // Czech
-    'sk': ['cs', 'pl'],         // Slovak
-    'pl': ['cs', 'sk'],         // Polish
+    'cs': ['sk'],               // Czech
+    'sk': ['cs'],               // Slovak
 
     // Scandinavian
     'da': ['no', 'sv'],         // Danish
     'no': ['da', 'sv'],         // Norwegian
     'sv': ['da', 'no'],         // Swedish
 
-    // Finno-Ugric
-    'fi': ['et'],               // Finnish
-    'et': ['fi'],               // Estonian
-
     // Iberian/Romance
-    'es': ['pt', 'ca', 'gl'],   // Spanish
-    'pt': ['es', 'gl'],         // Portuguese
-    'ca': ['es', 'oc'],         // Catalan (related to Occitan)
-    'gl': ['es', 'pt'],         // Galician
+    'pt': ['gl'],               // Portuguese
+    'gl': ['pt'],               // Galician
+
+    'ca': ['oc'],               // Catalan (related to Occitan)
     'oc': ['ca'],               // Occitan (related to Catalan)
 
     // Malay-Indonesian
     'id': ['ms'],               // Indonesian
-    'ms': ['id'],               // Malay
-
-    // East Slavic (Cyrillic)
-    'ru': ['uk', 'be'],         // Russian
-    'uk': ['ru', 'be'],         // Ukrainian
-    'be': ['ru', 'uk'],         // Belarusian
+    'ms': ['id']                // Malay
 };
 
 /**
