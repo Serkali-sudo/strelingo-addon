@@ -492,6 +492,13 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt', languageCode = nu
 async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = null, isRetry = false, languageCode = null) {
     console.log(`[OLD API] Fetching subtitle content from: ${url}`);
     try {
+
+        // Get cookie for old API
+        const cookie = await refreshOpensubtitlesCookie();
+        if (!cookie) {
+            console.warn("[OLD API] Could not obtain a cookie. Old API downloads may fail due to Cloudflare protection.");
+        }
+
         const headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -892,12 +899,6 @@ process.on('SIGINT', () => {
             }
 
             try {
-                // Get cookie for old API (if needed later)
-                const cookie = await refreshOpensubtitlesCookie();
-                if (!cookie) {
-                    console.warn("[OLD API] Could not obtain a cookie. Old API downloads may fail due to Cloudflare protection.");
-                }
-
                 // Extract video parameters from extra for better matching
                 const videoParams = {
                     filename: extra?.filename,
