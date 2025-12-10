@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 // Load .env file for local development (optional - containers set env vars directly)
-if (typeof process !== 'undefined' && process.env && !process.env.IS_CLOUDFLARE_WORKERS) {
-    try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
-}
+try { require('dotenv').config(); } catch (e) { /* dotenv not needed in production */ }
 
 const { addonBuilder } = require('stremio-addon-sdk');
 const axios = require('axios');
@@ -14,17 +12,9 @@ const { createClient } = require('@supabase/supabase-js');
 const { convert: convertWithSubtitleConverter } = require('subtitle-converter');
 const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
+const fs = require('fs').promises;
 const path = require('path');
 const { fixCharacterEncodings, decodeSubtitleBuffer } = require('./encoding');
-
-let fs;
-if (typeof process !== 'undefined' && process.env && !process.env.IS_CLOUDFLARE_WORKERS) {
-    try {
-        fs = require('fs').promises;
-    } catch (e) {
-        // fs not available
-    }
-}
 
 const languageMap = {
     'abk': 'Abkhazian', 'afr': 'Afrikaans', 'alb': 'Albanian', 'amh': 'Amharic', 'ara': 'Arabic',
@@ -799,7 +789,7 @@ process.on('SIGINT', () => {
 });
 
 // --- Main Async IIFE to handle ESM import and setup ---
-const initPromise = (async () => {
+(async () => {
     try {
         // Dynamically import the ESM module
         const { default: SRTParser2 } = await import('srt-parser-2');
@@ -1187,7 +1177,7 @@ const initPromise = (async () => {
                     }
 
                     // Attempt Local Storage if both Vercel and Supabase failed/skipped
-                    if (!uploadUrl && LOCAL_STORAGE_DIR && fs) {
+                    if (!uploadUrl && LOCAL_STORAGE_DIR) {
                         console.log(`Attempting Local Storage upload for v${version}...`);
                         try {
                             // Create the local storage directory if it doesn't exist
@@ -1242,75 +1232,67 @@ const initPromise = (async () => {
 
         // --- Start Server (Inside IIFE) ---
         const addonInterface = builder.getInterface();
+
+        const express = require('express');
+        const getRouter = require('stremio-addon-sdk/src/getRouter');
         const landingTemplate = require('./landingTemplate');
-        
+
+        const app = express();
+
+        // Enable CORS for all routes
+        app.use((req, res, next) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Headers', '*');
+            next();
+        });
+
+        // Serve subtitle files from local storage (if enabled) - BEFORE addon routes
+        if (LOCAL_STORAGE_DIR) {
+            app.use('/subtitles', express.static(LOCAL_STORAGE_DIR, {
+                setHeaders: (res, filepath) => {
+                    if (filepath.endsWith('.srt')) {
+                        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
+                    }
+                }
+            }));
+        }
+
+        // Mount addon router (this handles manifest, resources, etc.)
+        app.use(getRouter(addonInterface));
+
         // Landing page (using custom template with Install/Install Web/Copy Link buttons)
         const landingHTML = landingTemplate(addonInterface.manifest);
         const hasConfig = !!(addonInterface.manifest.config || []).length;
 
-        // Start server
-        if (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS) {
-            console.log("Cloudflare Workers environment detected. Skipping Express setup.");
-            Object.assign(module.exports, { addonInterface, landingHTML });
-        } else {
-            const express = require('express');
-            const getRouter = require('stremio-addon-sdk/src/getRouter');
-
-            const app = express();
-
-            // Enable CORS for all routes
-            app.use((req, res, next) => {
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.setHeader('Access-Control-Allow-Headers', '*');
-                next();
-            });
-
-            // Serve subtitle files from local storage (if enabled) - BEFORE addon routes
-            if (LOCAL_STORAGE_DIR) {
-                app.use('/subtitles', express.static(LOCAL_STORAGE_DIR, {
-                    setHeaders: (res, filepath) => {
-                        if (filepath.endsWith('.srt')) {
-                            res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-                        }
-                    }
-                }));
-            }
-
-            // Mount addon router (this handles manifest, resources, etc.)
-            app.use(getRouter(addonInterface));
-
-            app.get('/', (_, res) => {
-                if (hasConfig) {
-                    res.redirect('/configure');
-                } else {
-                    res.setHeader('content-type', 'text/html');
-                    res.end(landingHTML);
-                }
-            });
-
+        app.get('/', (_, res) => {
             if (hasConfig) {
-                app.get('/configure', (_, res) => {
-                    res.setHeader('content-type', 'text/html');
-                    res.end(landingHTML);
-                });
+                res.redirect('/configure');
+            } else {
+                res.setHeader('content-type', 'text/html');
+                res.end(landingHTML);
             }
+        });
 
-            app.listen(ADDON_PORT, () => {
-                console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
-                if (LOCAL_STORAGE_DIR) {
-                    console.log(`Local storage enabled at: ${LOCAL_STORAGE_DIR}`);
-                    console.log(`Subtitle files served at: ${EXTERNAL_URL}/subtitles/`);
-                }
+        if (hasConfig) {
+            app.get('/configure', (_, res) => {
+                res.setHeader('content-type', 'text/html');
+                res.end(landingHTML);
             });
         }
 
-    } catch (err) {        console.error("Failed to import srt-parser-2 or setup addon:", err);
+        // Start server
+        app.listen(ADDON_PORT, () => {
+            console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
+            if (LOCAL_STORAGE_DIR) {
+                console.log(`Local storage enabled at: ${LOCAL_STORAGE_DIR}`);
+                console.log(`Subtitle files served at: ${EXTERNAL_URL}/subtitles/`);
+            }
+        });
+
+    } catch (err) {
+        console.error("Failed to import srt-parser-2 or setup addon:", err);
         process.exit(1); // Exit if essential import fails
     }
 })();
-
-if (typeof process !== 'undefined' && process.env && process.env.IS_CLOUDFLARE_WORKERS) {
-    module.exports = { builder, initPromise };
-}
 
 console.log("Addon script initialized. Waiting for ESM import and server start..."); // Log outside IIFE 
