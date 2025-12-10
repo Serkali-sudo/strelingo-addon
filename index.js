@@ -1232,59 +1232,59 @@ const initPromise = (async () => {
 
         // --- Start Server (Inside IIFE) ---
         const addonInterface = builder.getInterface();
-
-        const express = require('express');
-        const getRouter = require('stremio-addon-sdk/src/getRouter');
         const landingTemplate = require('./landingTemplate');
-
-        const app = express();
-
-        // Enable CORS for all routes
-        app.use((req, res, next) => {
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Headers', '*');
-            next();
-        });
-
-        // Serve subtitle files from local storage (if enabled) - BEFORE addon routes
-        if (LOCAL_STORAGE_DIR) {
-            app.use('/subtitles', express.static(LOCAL_STORAGE_DIR, {
-                setHeaders: (res, filepath) => {
-                    if (filepath.endsWith('.srt')) {
-                        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-                    }
-                }
-            }));
-        }
-
-        // Mount addon router (this handles manifest, resources, etc.)
-        app.use(getRouter(addonInterface));
-
+        
         // Landing page (using custom template with Install/Install Web/Copy Link buttons)
         const landingHTML = landingTemplate(addonInterface.manifest);
         const hasConfig = !!(addonInterface.manifest.config || []).length;
 
-        app.get('/', (_, res) => {
-            if (hasConfig) {
-                res.redirect('/configure');
-            } else {
-                res.setHeader('content-type', 'text/html');
-                res.end(landingHTML);
-            }
-        });
-
-        if (hasConfig) {
-            app.get('/configure', (_, res) => {
-                res.setHeader('content-type', 'text/html');
-                res.end(landingHTML);
-            });
-        }
-
         // Start server
         if (process.env.IS_CLOUDFLARE_WORKERS) {
-            console.log("Cloudflare Workers environment detected. Skipping app.listen().");
+            console.log("Cloudflare Workers environment detected. Skipping Express setup.");
             Object.assign(module.exports, { addonInterface, landingHTML });
         } else {
+            const express = require('express');
+            const getRouter = require('stremio-addon-sdk/src/getRouter');
+
+            const app = express();
+
+            // Enable CORS for all routes
+            app.use((req, res, next) => {
+                res.setHeader('Access-Control-Allow-Origin', '*');
+                res.setHeader('Access-Control-Allow-Headers', '*');
+                next();
+            });
+
+            // Serve subtitle files from local storage (if enabled) - BEFORE addon routes
+            if (LOCAL_STORAGE_DIR) {
+                app.use('/subtitles', express.static(LOCAL_STORAGE_DIR, {
+                    setHeaders: (res, filepath) => {
+                        if (filepath.endsWith('.srt')) {
+                            res.setHeader('Content-Type', 'text/srt; charset=utf-8');
+                        }
+                    }
+                }));
+            }
+
+            // Mount addon router (this handles manifest, resources, etc.)
+            app.use(getRouter(addonInterface));
+
+            app.get('/', (_, res) => {
+                if (hasConfig) {
+                    res.redirect('/configure');
+                } else {
+                    res.setHeader('content-type', 'text/html');
+                    res.end(landingHTML);
+                }
+            });
+
+            if (hasConfig) {
+                app.get('/configure', (_, res) => {
+                    res.setHeader('content-type', 'text/html');
+                    res.end(landingHTML);
+                });
+            }
+
             app.listen(ADDON_PORT, () => {
                 console.log(`HTTP addon accessible at: http://127.0.0.1:${ADDON_PORT}/manifest.json`);
                 if (LOCAL_STORAGE_DIR) {
