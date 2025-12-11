@@ -5,11 +5,24 @@
 
 const chardet = require('chardet');
 const iconv = require('iconv-lite');
-const { francAll } = require('franc-all');
 const { iso6393To1 } = require('iso-639-3');
 
 // Sample size for chardet detection (1KB is enough for accurate detection)
 const CHARDET_SAMPLE_SIZE = 1024;
+
+// Cache for franc-all module
+let francAllFn = null;
+
+/**
+ * Load franc-all module dynamically (cached)
+ */
+async function getFrancAll() {
+    if (!francAllFn) {
+        const { francAll } = await import('franc-all');
+        francAllFn = francAll;
+    }
+    return francAllFn;
+}
 
 /**
  * Map OpenSubtitles 3-letter codes to ISO 639-1 2-letter codes.
@@ -361,9 +374,9 @@ function isCleanText(text, maxReplacementRatio = 0.01) {
  *
  * @param {string} text - The text to analyze
  * @param {string|null} expectedLang - Optional expected language (2-letter) for comparison
- * @returns {Object} { detected: '2-letter code', detected3: 'ISO 639-3 code', isMatch: boolean, isRelatedMatch: boolean }
+ * @returns {Promise<Object>} { detected: '2-letter code', detected3: 'ISO 639-3 code', isMatch: boolean, isRelatedMatch: boolean }
  */
-function detectLanguage(text, expectedLang = null) {
+async function detectLanguage(text, expectedLang = null) {
     if (!text || text.length < 100) {
         return { detected: null, detected3: 'und', isMatch: false, isRelatedMatch: false };
     }
@@ -388,8 +401,11 @@ function detectLanguage(text, expectedLang = null) {
         return { detected: null, detected3: 'und', isMatch: false, isRelatedMatch: false };
     }
 
+    // Dynamic import for franc-all (ESM module)
+    const detect = await getFrancAll();
+
     // Run franc-all detection (returns array of [lang, confidence] sorted by confidence)
-    const results = francAll(sample);
+    const results = detect(sample);
 
     // francAll returns empty array or [['und', 1]] when it can't detect
     if (!results.length || results[0][0] === 'und') {
@@ -433,9 +449,9 @@ function detectLanguage(text, expectedLang = null) {
  * @param {string} expectedLang - Expected language code (2 or 3 letter)
  * @param {Object} options - Optional settings
  * @param {boolean} options.skipCorruptionCheck - Skip the corruption check (for already-validated text)
- * @returns {boolean} true if text appears to be in the expected language
+ * @returns {Promise<boolean>} true if text appears to be in the expected language
  */
-function validateLanguage(text, expectedLang, options = {}) {
+async function validateLanguage(text, expectedLang, options = {}) {
     if (!text || !expectedLang) return true;  // No validation possible
 
     const expected = normalizeLanguageCode(expectedLang) || expectedLang.toLowerCase();
@@ -446,7 +462,7 @@ function validateLanguage(text, expectedLang, options = {}) {
     }
 
     // Detect language using franc
-    const detection = detectLanguage(text, expected);
+    const detection = await detectLanguage(text, expected);
 
     // Accept if detection says it matches (exact or related language)
     return detection.isRelatedMatch;
@@ -847,9 +863,9 @@ function normalizeEncoding(encoding) {
  * @param {Buffer} buffer - The raw subtitle file buffer
  * @param {string|null} languageHint - Optional language code (2 or 3 letter) for encoding hints
  * @param {boolean|Object} options - If boolean: silent mode. If object: { verbose, skipLanguageValidation }
- * @returns {string|null} The decoded subtitle text, or null if validation fails
+ * @returns {Promise<string|null>} The decoded subtitle text, or null if validation fails
  */
-function decodeSubtitleBuffer(buffer, languageHint = null, options = {}) {
+async function decodeSubtitleBuffer(buffer, languageHint = null, options = {}) {
     // Handle legacy boolean argument (silent = true)
     let silent = false;
     let skipLanguageValidation = false;
@@ -967,7 +983,7 @@ function decodeSubtitleBuffer(buffer, languageHint = null, options = {}) {
     // Final validation: verify text matches expected language using franc detection
     // Skip this validation if skipLanguageValidation is true (for test analysis)
     if (languageHint && !skipLanguageValidation) {
-        const langValid = validateLanguage(subtitleText, languageHint, { skipCorruptionCheck: true });
+        const langValid = await validateLanguage(subtitleText, languageHint, { skipCorruptionCheck: true });
         if (!langValid) {
             log(`[ENCODING] Final validation failed: detected language doesn't match expected ${languageHint}. Rejecting.`);
             return null;

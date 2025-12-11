@@ -115,7 +115,7 @@ async function runTests() {
             }
 
             // Decode with skipLanguageValidation to always get text (even if wrong language)
-            const decoded = decodeSubtitleBuffer(buffer, languageHint, { skipLanguageValidation: true });
+            const decoded = await decodeSubtitleBuffer(buffer, languageHint, { skipLanguageValidation: true });
 
             // Check if this is a known bad input first (by hash)
             const knownBadEntry = isKnownBad(filepath);
@@ -153,11 +153,11 @@ async function runTests() {
             }
 
             // Detect the actual language
-            const detection = detectLanguage(decoded, languageHint);
+            const detection = await detectLanguage(decoded, languageHint);
 
             // Check if content matches expected language using production validation
             const languageMatches = languageHint
-                ? validateLanguage(decoded, languageHint, { skipCorruptionCheck: true })
+                ? await validateLanguage(decoded, languageHint, { skipCorruptionCheck: true })
                 : true;  // No language hint = accept
 
             // Build warning flags

@@ -462,7 +462,7 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt', languageCode = nu
         // The function handles: UTF-16 LE/BE (with BOM), double-encoded BOMs,
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
-        const subtitleText = decodeSubtitleBuffer(buffer, languageCode);
+        const subtitleText = await decodeSubtitleBuffer(buffer, languageCode);
         if (!subtitleText) {
             console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
             return null;
@@ -545,7 +545,7 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
         // The function handles: UTF-16 LE/BE (with BOM), double-encoded BOMs,
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
-        subtitleText = decodeSubtitleBuffer(contentBuffer, languageCode);
+        subtitleText = await decodeSubtitleBuffer(contentBuffer, languageCode);
         if (!subtitleText) {
             console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
             return null;

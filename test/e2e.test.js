@@ -306,7 +306,7 @@ async function testSubtitles(userManifests) {
 
                 // Fetch and validate first subtitle
                 const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-                const content = decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+                const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
 
                 // Validate SRT format
                 const srtValidation = validateSrtFormat(content);
@@ -370,7 +370,7 @@ async function testSeries(userManifests) {
                 test(`${testName} has subtitles`, true, `(${subs.length} versions)`);
 
                 const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-                const content = decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+                const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
 
                 // Validate SRT format
                 const srtValidation = validateSrtFormat(content);
@@ -488,7 +488,7 @@ async function testLanguageAliases() {
 
             // Fetch and validate content contains Romanian
             const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-            const content = decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+            const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
 
             const roCheck = checkExpectedStrings(content, romanianStrings);
             test(`${testName} contains Romanian`, roCheck.success,
@@ -523,7 +523,7 @@ async function testLanguageAliases() {
 
         // Fetch and validate content contains Chinese
         const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-        const content = decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+        const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
 
         const zhCheck = checkExpectedStrings(content, chineseStrings);
         test(`${testName} contains Chinese`, zhCheck.success,
