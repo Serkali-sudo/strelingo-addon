@@ -5,13 +5,14 @@
 
 const chardet = require('chardet');
 const iconv = require('iconv-lite');
-const { iso6393To1 } = require('iso-639-3');
 
 // Sample size for chardet detection (1KB is enough for accurate detection)
 const CHARDET_SAMPLE_SIZE = 1024;
 
-// Cache for franc-all module
+// Cache for dynamically loaded modules and maps
 let francAllFn = null;
+let isoMap = null;
+let francToIso2Map = null;
 
 /**
  * Load franc-all module dynamically (cached)
@@ -22,6 +23,17 @@ async function getFrancAll() {
         francAllFn = francAll;
     }
     return francAllFn;
+}
+
+/**
+ * Load iso-639-3 module dynamically (cached)
+ */
+async function getIsoMap() {
+    if (!isoMap) {
+        const { iso6393To1 } = await import('iso-639-3');
+        isoMap = iso6393To1;
+    }
+    return isoMap;
 }
 
 /**
@@ -198,9 +210,9 @@ const SKIP_LANGUAGE_CODES = [
  * Convert language code to 2-letter ISO 639-1 format for encoding hints.
  * Accepts both 2-letter and 3-letter codes.
  * @param {string} lang - Language code (2 or 3 letter)
- * @returns {string|null} 2-letter code or null if unknown
+ * @returns {Promise<string|null>} 2-letter code or null if unknown
  */
-function normalizeLanguageCode(lang) {
+async function normalizeLanguageCode(lang) {
     if (!lang) return null;
     const lower = lang.toLowerCase();
     // Already 2-letter
@@ -208,6 +220,7 @@ function normalizeLanguageCode(lang) {
     // Convert 3-letter to 2-letter using:
     // 1. Our OpenSubtitles-specific codes (ISO639_3_TO_1)
     // 2. The iso-639-3 library's comprehensive mapping (iso6393To1)
+    const iso6393To1 = await getIsoMap();
     return ISO639_3_TO_1[lower] || iso6393To1[lower] || null;
 }
 
@@ -241,47 +254,55 @@ function getValidationSkipPos(textLength) {
  *
  * Note: iso6393To1 from iso-639-3 library has 184 entries, covering most standard codes.
  */
-const FRANC_TO_ISO2 = {
-    // Base: iso-639-3 library's comprehensive ISO 639-3 → ISO 639-1 mapping
-    ...iso6393To1,
+async function getFrancToIso2Map() {
+    if (francToIso2Map) return francToIso2Map;
+    
+    const iso6393To1 = await getIsoMap();
+    
+    francToIso2Map = {
+        // Base: iso-639-3 library's comprehensive ISO 639-3 → ISO 639-1 mapping
+        ...iso6393To1,
 
-    // Add our OpenSubtitles-specific codes (bibliographic variants like 'fre' for French)
-    ...ISO639_3_TO_1,
+        // Add our OpenSubtitles-specific codes (bibliographic variants like 'fre' for French)
+        ...ISO639_3_TO_1,
 
-    // Individual language → macrolanguage mappings (franc returns these)
-    'khk': 'mn',   // Khalkha Mongolian → Mongolian (macrolanguage)
-    'arb': 'ar',   // Standard Arabic → Arabic (macrolanguage)
-    'cmn': 'zh',   // Mandarin Chinese → Chinese (macrolanguage)
-    'yue': 'zh',   // Cantonese → Chinese
-    'nan': 'zh',   // Min Nan → Chinese
-    'wuu': 'zh',   // Wu Chinese → Chinese
-    'pes': 'fa',   // Western Farsi → Persian
-    'prs': 'fa',   // Dari → Persian
-    'zlm': 'ms',   // Malay (generic) → Malay
-    'zsm': 'ms',   // Standard Malay → Malay
-    'ekk': 'et',   // Standard Estonian → Estonian
-    'lvs': 'lv',   // Standard Latvian → Latvian
-    'uzn': 'uz',   // Northern Uzbek → Uzbek
-    'uzs': 'uz',   // Southern Uzbek → Uzbek
+        // Individual language → macrolanguage mappings (franc returns these)
+        'khk': 'mn',   // Khalkha Mongolian → Mongolian (macrolanguage)
+        'arb': 'ar',   // Standard Arabic → Arabic (macrolanguage)
+        'cmn': 'zh',   // Mandarin Chinese → Chinese (macrolanguage)
+        'yue': 'zh',   // Cantonese → Chinese
+        'nan': 'zh',   // Min Nan → Chinese
+        'wuu': 'zh',   // Wu Chinese → Chinese
+        'pes': 'fa',   // Western Farsi → Persian
+        'prs': 'fa',   // Dari → Persian
+        'zlm': 'ms',   // Malay (generic) → Malay
+        'zsm': 'ms',   // Standard Malay → Malay
+        'ekk': 'et',   // Standard Estonian → Estonian
+        'lvs': 'lv',   // Standard Latvian → Latvian
+        'uzn': 'uz',   // Northern Uzbek → Uzbek
+        'uzs': 'uz',   // Southern Uzbek → Uzbek
 
-    // Norwegian varieties
-    'nno': 'no',   // Norwegian Nynorsk → Norwegian
-    'nob': 'no',   // Norwegian Bokmål → Norwegian
+        // Norwegian varieties
+        'nno': 'no',   // Norwegian Nynorsk → Norwegian
+        'nob': 'no',   // Norwegian Bokmål → Norwegian
 
-    // Legacy/alternate codes that franc might return
-    'src': 'sr',   // Serbian (alternate code)
+        // Legacy/alternate codes that franc might return
+        'src': 'sr',   // Serbian (alternate code)
 
-    // Montenegrin (no ISO 639-1 code, but essentially same as Serbian/Croatian/Bosnian)
-    'cnr': 'me',   // Montenegrin → 'me' (unofficial but widely used)
+        // Montenegrin (no ISO 639-1 code, but essentially same as Serbian/Croatian/Bosnian)
+        'cnr': 'me',   // Montenegrin → 'me' (unofficial but widely used)
 
-    // Albanian dialects → Albanian
-    'als': 'sq',   // Tosk Albanian → Albanian
-    'aln': 'sq',   // Gheg Albanian → Albanian
+        // Albanian dialects → Albanian
+        'als': 'sq',   // Tosk Albanian → Albanian
+        'aln': 'sq',   // Gheg Albanian → Albanian
 
-    // English-related varieties (franc sometimes detects these for English text)
-    'pcm': 'en',   // Nigerian Pidgin → English (pidgin based on English)
-    'sco': 'en',   // Scots → English (closely related, often confused)
-};
+        // English-related varieties (franc sometimes detects these for English text)
+        'pcm': 'en',   // Nigerian Pidgin → English (pidgin based on English)
+        'sco': 'en',   // Scots → English (closely related, often confused)
+    };
+    
+    return francToIso2Map;
+}
 
 /**
  * Related language groups - languages that are so similar that a speaker of one can generally 
@@ -415,10 +436,11 @@ async function detectLanguage(text, expectedLang = null) {
     const detected3 = results[0][0];  // Top result's ISO 639-3 code
 
     // Convert to 2-letter code using our comprehensive mapping
-    const detected = FRANC_TO_ISO2[detected3] || detected3;
+    const francToIso2 = await getFrancToIso2Map();
+    const detected = francToIso2[detected3] || detected3;
 
     // Normalize expected language if provided
-    const expected = expectedLang ? (normalizeLanguageCode(expectedLang) || expectedLang.toLowerCase()) : null;
+    const expected = expectedLang ? (await normalizeLanguageCode(expectedLang) || expectedLang.toLowerCase()) : null;
 
     // Check for exact match
     const isMatch = expected ? (detected === expected) : false;
@@ -454,7 +476,7 @@ async function detectLanguage(text, expectedLang = null) {
 async function validateLanguage(text, expectedLang, options = {}) {
     if (!text || !expectedLang) return true;  // No validation possible
 
-    const expected = normalizeLanguageCode(expectedLang) || expectedLang.toLowerCase();
+    const expected = (await normalizeLanguageCode(expectedLang)) || expectedLang.toLowerCase();
 
     // Check for corruption/garbage first (unless already validated)
     if (!options.skipCorruptionCheck && !isCleanText(text)) {
@@ -677,13 +699,13 @@ function buildCodepageList(languageHint = null) {
  * @param {string} text - The text to check and potentially fix
  * @param {string|null} languageHint - Optional language code (2 or 3 letter) for encoding hints
  * @param {boolean} silent - If true, don't log messages (for testing)
- * @returns {string} The fixed text, or original if no fix needed
+ * @returns {Promise<string>} The fixed text, or original if no fix needed
  */
-function fixCharacterEncodings(text, languageHint = null, silent = false) {
+async function fixCharacterEncodings(text, languageHint = null, silent = false) {
     const log = silent ? () => {} : console.log.bind(console);
 
     // Normalize language hint to 2-letter code
-    languageHint = normalizeLanguageCode(languageHint);
+    languageHint = await normalizeLanguageCode(languageHint);
 
     // Look for patterns that indicate misencoded text:
     // When text is incorrectly treated as Latin-1 and re-encoded to UTF-8,
@@ -886,7 +908,7 @@ async function decodeSubtitleBuffer(buffer, languageHint = null, options = {}) {
     }
 
     // Normalize language hint to 2-letter code (accepts both 2 and 3 letter codes)
-    languageHint = normalizeLanguageCode(languageHint);
+    languageHint = await normalizeLanguageCode(languageHint);
 
     let subtitleText;
 
@@ -968,7 +990,7 @@ async function decodeSubtitleBuffer(buffer, languageHint = null, options = {}) {
     }
 
     // Apply text-level encoding fixes (e.g., double-encoded UTF-8)
-    subtitleText = fixCharacterEncodings(subtitleText, languageHint, silent);
+    subtitleText = await fixCharacterEncodings(subtitleText, languageHint, silent);
 
     // Final cleanup: strip any BOM that might have survived
     // - U+FEFF (real BOM as character)
@@ -1006,5 +1028,5 @@ module.exports = {
     ISO639_3_TO_1,
     LANGUAGE_ALIASES,
     RELATED_LANGUAGES,
-    FRANC_TO_ISO2,
+    // FRANC_TO_ISO2 is now handled internally via getFrancToIso2Map
 };
