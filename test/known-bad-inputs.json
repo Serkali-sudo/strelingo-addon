@@ -30,6 +30,36 @@
       "reason": "Source file corruption: 14,751 UTF-8 replacement characters (U+FFFD) baked into raw bytes from OpenSubtitles - encoding beyond repair",
       "markedAt": "2025-12-07T20:33:37.278Z",
       "originalFile": "tt0133093/tha_2_opensubtitles.raw"
+    },
+    "462944a98fda3365aeb09780f566b41f6b9b2b95005100de4972733faa450a34": {
+      "reason": "Source file corruption: Hebrew UTF-8 bytes where Thai expected, 18,697 replacement chars - original TIS-620 Thai encoding was destroyed during upload to OpenSubtitles",
+      "markedAt": "2025-12-08T23:46:35.293Z",
+      "originalFile": "tt4154796/tha_1_opensubtitles.raw"
+    },
+    "10ccc788674debfb6e85d06839cb62d0bc12cfab3346f262a0728a75b8bd400c": {
+      "reason": "Source file corruption: 686 UTF-8 replacement characters (U+FFFD) baked into source bytes from OpenSubtitles - encoding beyond repair",
+      "markedAt": "2025-12-08T23:46:36.528Z",
+      "originalFile": "tt0088323/fas_1_opensubtitles.raw"
+    },
+    "3a27cf9a2af3c9f02b2d1d06f7f9cec2c901359a9a44706bc57d7f24876683b0": {
+      "reason": "Source file corruption: Hebrew UTF-8 bytes where Thai expected, 7,959 replacement chars - original TIS-620 Thai encoding was destroyed during upload to OpenSubtitles",
+      "markedAt": "2025-12-08T23:46:37.753Z",
+      "originalFile": "tt0088323/tha_1_opensubtitles.raw"
+    },
+    "a6825bf8cbb2a0a84f68040468468f98b1be130bc52ba39dfb6f03791626bf54": {
+      "reason": "Source file corruption: Hebrew UTF-8 bytes where Thai expected, 12,573 replacement chars - original TIS-620 Thai encoding was destroyed during upload to OpenSubtitles",
+      "markedAt": "2025-12-08T23:46:39.290Z",
+      "originalFile": "tt0086190/tha_2_opensubtitles.raw"
+    },
+    "54b9dd713e593579b50c94ca1ea70e87271446611ae5d02ddc81a8f2c3043d6b": {
+      "reason": "Source file corruption: Hebrew UTF-8 bytes where Thai expected, 21,267 replacement chars - original TIS-620 Thai encoding was destroyed during upload to OpenSubtitles",
+      "markedAt": "2025-12-08T23:46:41.344Z",
+      "originalFile": "tt0114558/tha_1_opensubtitles.raw"
+    },
+    "5a042f41ed460371a2908dfdc0fd91d10e9d3fa1037dad587697b3f988409c91": {
+      "reason": "Source file corruption: Empty subtitle file - 22,276 lines of timestamp skeletons with no actual text content",
+      "markedAt": "2025-12-09T01:56:46.196Z",
+      "originalFile": "tt0133093/bul_1_opensubtitles.raw"
     }
   }
 }

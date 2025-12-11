@@ -10,19 +10,22 @@
     "test:e2e": "node test/e2e.test.js"
   },
   "dependencies": {
-    "axios": "^1.9.0",
-    "stremio-addon-sdk": "^1.6.10",
-    "srt-parser-2": "^1.2.3",
-    "pako": "^2.1.0",
-    "chardet": "^2.1.0",
-    "iconv-lite": "^0.6.3",
-    "@vercel/blob": "^1.0.1",
     "@supabase/supabase-js": "^2.49.4",
-    "subtitle-converter": "^3.0.12",
-    "subsrt": "^1.1.1",
-    "sanitize-html": "^2.17.0",
+    "@vercel/blob": "^1.0.1",
+    "axios": "^1.9.0",
+    "chardet": "^2.1.0",
     "dotenv": "^17.2.3",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "franc": "^6.2.0",
+    "franc-all": "^7.2.0",
+    "iconv-lite": "^0.6.3",
+    "iso-639-3": "^3.0.1",
+    "pako": "^2.1.0",
+    "sanitize-html": "^2.17.0",
+    "srt-parser-2": "^1.2.3",
+    "stremio-addon-sdk": "^1.6.10",
+    "subsrt": "^1.1.1",
+    "subtitle-converter": "^3.0.12"
   },
   "engines": {
     "node": ">=14"

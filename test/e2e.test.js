@@ -450,6 +450,90 @@ async function testErrorHandling(userManifests) {
     }
 }
 
+/**
+ * Test language code aliases - verify alternate codes map to correct languages.
+ * Tests that rom/rum/mol → Romanian and zhe → Chinese.
+ */
+async function testLanguageAliases() {
+    log('\n=== Language Code Aliases ===');
+
+    // Use The Matrix (tt0133093) as test movie - it has Romanian and Chinese expected strings
+    const testMovie = movies.find(m => m.id === 'tt0133093') || { id: 'tt0133093', name: 'The Matrix' };
+    const romanianStrings = testMovie.expectedStrings?.['ro'] || ['Matrix', 'este', 'sunt'];
+    const chineseStrings = testMovie.expectedStrings?.['zh'] || ['矩陣', '母體'];
+
+    // Test Romanian aliases: ron, rum, mol should all return Romanian subtitles
+    const romanianAliases = ['ron', 'rum', 'mol'];
+    for (const alias of romanianAliases) {
+        const testName = `${alias} → Romanian`;
+        const url = `${BASE_URL}/${buildConfigUrl('eng', alias)}/subtitles/movie/${testMovie.id}.json`;
+
+        markLogPosition();
+
+        try {
+            const res = await axios.get(url, { timeout: 120000 });
+            test(`${testName} request`, res.status === 200);
+
+            const subs = res.data.subtitles || [];
+            if (subs.length === 0) {
+                const logs = getRecentLogs(testMovie.id);
+                const reason = logs.includes('No subtitles found')
+                    ? 'API returned no subs for Romanian'
+                    : logs.includes('403') ? 'API returned 403'
+                    : 'No subtitles from API';
+                fail(`${testName} has subtitles`, reason);
+                continue;
+            }
+            test(`${testName} has subtitles`, true, `(${subs.length} versions)`);
+
+            // Fetch and validate content contains Romanian
+            const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
+            const content = decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+
+            const roCheck = checkExpectedStrings(content, romanianStrings);
+            test(`${testName} contains Romanian`, roCheck.success,
+                roCheck.success ? '' : `missing: ${roCheck.missing.join(', ')}`);
+
+        } catch (e) {
+            fail(`${testName} request`, e.message);
+        }
+    }
+
+    // Test Chinese alias: zhe should return Chinese subtitles
+    const testName = 'zhe → Chinese';
+    const url = `${BASE_URL}/${buildConfigUrl('eng', 'zhe')}/subtitles/movie/${testMovie.id}.json`;
+
+    markLogPosition();
+
+    try {
+        const res = await axios.get(url, { timeout: 120000 });
+        test(`${testName} request`, res.status === 200);
+
+        const subs = res.data.subtitles || [];
+        if (subs.length === 0) {
+            const logs = getRecentLogs(testMovie.id);
+            const reason = logs.includes('No subtitles found')
+                ? 'API returned no subs for Chinese'
+                : logs.includes('403') ? 'API returned 403'
+                : 'No subtitles from API';
+            fail(`${testName} has subtitles`, reason);
+            return;
+        }
+        test(`${testName} has subtitles`, true, `(${subs.length} versions)`);
+
+        // Fetch and validate content contains Chinese
+        const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
+        const content = decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+
+        const zhCheck = checkExpectedStrings(content, chineseStrings);
+        test(`${testName} contains Chinese`, zhCheck.success,
+            zhCheck.success ? '' : `missing: ${zhCheck.missing.join(', ')}`);
+
+    } catch (e) {
+        fail(`${testName} request`, e.message);
+    }
+}
+
 async function stopServer() {
     if (serverStartedByUs) {
         log('\n=== Stopping Server ===');
@@ -493,6 +577,7 @@ async function main() {
         const userManifests = await testUserManifests();
         await testSubtitles(userManifests);
         await testSeries(userManifests);
+        await testLanguageAliases();
         await testErrorHandling(userManifests);
 
     } finally {

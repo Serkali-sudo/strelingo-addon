@@ -188,5 +188,53 @@ module.exports = [
             'fi': ['Stark', 'Talvi', 'tulee', 'Kuningas'],
             'hi': ['स्टार्क', 'सर्दी', 'आ', 'रही', 'राजा'],
         }
+    },
+    // === MISLABELED TEST CASES ===
+    // These movies have known mislabeled subtitles to verify MISLABELED detection works
+    {
+        id: 'tt0088323',
+        name: 'The NeverEnding Story',
+        expectedStrings: {
+            'en': ['Bastian', 'Nothing', 'Atreyu', 'book'],
+            'es': ['Atreyu', 'Bastian', 'está', 'qué'],
+            'pt': ['Bastian', 'Atreyu', 'você', 'não'],
+            'fr': ['Atreyu', 'Bastian', 'vous', 'pas'],
+            'hu': ['Bastian', 'Semmi', 'Atreju'],  // Should fail - file is mislabeled
+        }
+    },
+    {
+        id: 'tt0116839',
+        name: 'Lawnmower Man 2: Beyond Cyberspace',
+        expectedStrings: {
+            'en': ['Jobe', 'cyberspace', 'virtual'],
+            'ru': ['Джоб', 'это', 'что', 'мой'],
+            'es': ['Jobe', 'esto', 'qué', 'para'],
+            'el': ['Τρέις', 'είναι', 'για', 'αυτό'],
+            'pl': ['Jobe', 'jest', 'nie'],  // Should fail - file is mislabeled
+        }
+    },
+    // === ORIGINAL THAI ENCODING TEST CASES ===
+    // These were the original movies that triggered the Thai encoding fix project
+    {
+        id: 'tt0086190',
+        name: 'Star Wars: Episode VI - Return of the Jedi',
+        expectedStrings: {
+            'en': ['Luke', 'Vader', 'Jedi', 'Force'],
+            'zh': ['維達', '路克', '絕地', '天行者'],
+            'ru': ['Люк', 'Соло', 'Скайуокер', 'галактик'],
+            'ja': ['ルーク', 'ソロ', 'ジェダイ', 'スカイウォーカー'],
+            'th': ['ลุค', 'เวเดอร์', 'เจได'],  // Thai script validation
+        }
+    },
+    {
+        id: 'tt0114558',
+        name: 'Strange Days',
+        expectedStrings: {
+            'en': ['Lenny', 'Macy', 'Faith'],
+            'es': ['Lenny', 'esto', 'qué', 'para'],
+            'pt': ['Lenny', 'Faith', 'isso', 'você'],
+            'fr': ['Lenny', 'Faith', 'vous', 'pas'],
+            'th': ['เลนนี่', 'เมซี่'],  // Thai script validation
+        }
     }
 ];

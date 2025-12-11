@@ -14,7 +14,7 @@ const subsrt = require('subsrt');
 const sanitize = require('sanitize-html');
 const fs = require('fs').promises;
 const path = require('path');
-const { fixCharacterEncodings, decodeSubtitleBuffer } = require('./encoding');
+const { decodeSubtitleBuffer, getLanguageAliases } = require('./encoding');
 
 const languageMap = {
     'abk': 'Abkhazian', 'afr': 'Afrikaans', 'alb': 'Albanian', 'amh': 'Amharic', 'ara': 'Arabic',
@@ -37,7 +37,7 @@ const languageMap = {
     'swe': 'Swedish', 'syr': 'Syriac', 'tam': 'Tamil', 'tat': 'Tatar', 'tel': 'Telugu', 'tet': 'Tetum',
     'tgl': 'Tagalog', 'tha': 'Thai', 'tok': 'Toki Pona', 'tur': 'Turkish', 'tuk': 'Turkmen', 'ukr': 'Ukrainian',
     'urd': 'Urdu', 'uzb': 'Uzbek', 'vie': 'Vietnamese', 'wel': 'Welsh', 'wen': 'Sorbian languages',
-    'zhc': 'Chinese (Cantonese)', 'zhe': 'Chinese bilingual', 'zht': 'Chinese (traditional)'
+    'zhc': 'Chinese (Cantonese)', 'zht': 'Chinese (traditional)'
 };
 
 // Map ISO 639-1 (browser) language codes to ISO 639-3 (our system) language codes
@@ -269,75 +269,12 @@ async function fetchAllSubtitles(baseSearchParams, type, videoParams = {}, needs
 }
 
 // Helper to filter and format subtitles by language
-// Languages with multiple ISO 639-2 codes (bibliographic B / terminological T)
-// When user selects either code, match both in results
-const languageAliases = {
-    'aka': ['aka', 'fat', 'twi'],         // Akan (with fallbacks)
-    'fat': ['fat', 'aka', 'twi'],         // Akan-Fanti (with fallbacks)
-    'twi': ['twi', 'aka', 'fat'],         // Akan-Twi (with fallbacks)
-    'alb': ['alb', 'sqi'],                // Albanian (with fallback)
-    'sqi': ['sqi', 'alb'],                // Albanian (with fallback)
-    'ara': ['ara', 'arb'],                // Arabic (with fallback)
-    'arb': ['arb', 'ara'],                // Arabic (with fallback)
-    'arm': ['arm', 'xcl', 'hye', 'hyw'],  // Armenian (with fallbacks)
-    'xcl': ['xcl', 'arm', 'hye', 'hyw'],  // Armanian-Classical (with fallbacks)
-    'hye': ['hye', 'arm', 'hyw', 'xcl'],  // Armenian-Eastern (with fallbacks)
-    'hyw': ['hyw', 'arm', 'hye', 'xcl'],  // Armenian-Western (with fallbacks)
-    'baq': ['baq', 'eus'],                // Basque (with fallback)
-    'eus': ['eus', 'baq'],                // Basque (with fallback)
-    'bur': ['bur', 'mya'],                // Burmese (with fallback)
-    'mya': ['mya', 'bur'],                // Burmese (with fallback)
-    'chi': ['chi', 'zho'],                // Chinese (with fallback)
-    'zho': ['zho', 'chi'],                // Chinese (with fallback)
-    'ces': ['ces', 'cze'],                // Czech (with fallback)
-    'cze': ['cze', 'ces'],                // Czech (with fallback)
-    'dut': ['dut', 'nld'],                // Dutch (with fallback)
-    'nld': ['nld', 'dut'],                // Dutch (with fallback)
-    'fil': ['fil', 'tgl'],                // Filipino (Pilipino) (with fallback)
-    'tgl': ['tgl', 'fil'],                // Filipino-Tagalog (with fallback)
-    'fra': ['fra', 'fre'],                // French (with fallback)
-    'fre': ['fre', 'fra'],                // French (with fallback)
-    'geo': ['geo', 'kat'],                // Georgian (with fallback)
-    'kat': ['kat', 'geo'],                // Georgian (with fallback)
-    'deu': ['deu', 'ger'],                // German (with fallback)
-    'ger': ['ger', 'deu'],                // German (with fallback)
-    'ell': ['ell', 'gre'],                // Greek (with fallback)
-    'gre': ['gre', 'ell'],                // Greek (with fallback)
-    'ice': ['ice', 'isl'],                // Icelandic (with fallback)
-    'isl': ['isl', 'ice'],                // Icelandic (with fallback)
-    'ind': ['ind', 'msa', 'may'],         // Indonesian (with fallback)
-    'mac': ['mac', 'mkd'],                // Macedonian (with fallback)
-    'mkd': ['mkd', 'mac'],                // Macedonian (with fallback)
-    'msa': ['msa', 'ind', 'may'],         // Malay (with fallback)
-    'may': ['may', 'ind', 'msa'],         // Malay (with fallback)
-    'mao': ['mao', 'mri'],                // Maori (with fallback)
-    'mri': ['mri', 'mao'],                // Maori (with fallback)
-    'nor': ['nor', 'nob', 'nno'],         // Norwegian (with fallbacks)
-    'nob': ['nob', 'nor', 'nno'],         // Norwegian-Bokmål (with fallbacks)
-    'nno': ['nno', 'nor', 'nob'],         // Norwegian-Nynorsk (with fallbacks)
-    'osd': ['osd', 'oss'],                // Ossetian-Digor (with fallback)
-    'oss': ['oss', 'osd'],                // Ossetian-Ossetic (with fallback)
-    'fas': ['fas', 'per'],                // Persian (with fallback)
-    'per': ['per', 'fas'],                // Persian (with fallback)
-    'ron': ['ron', 'rum', 'mol'],         // Romanian (with fallback)
-    'rum': ['rum', 'ron', 'mol'],         // Romanian (with fallback)
-    'mol': ['mol', 'rum', 'ron'],         // Romanian-Moldavian (with fallback)
-    'scc': ['scc', 'srp'],                // Serbian (with fallback)
-    'srp': ['srp', 'scc'],                // Serbian (with fallback)
-    'slk': ['slk', 'slo'],                // Slovak (with fallback)
-    'slo': ['slo', 'slk'],                // Slovak (with fallback)
-    'bod': ['bod', 'tib'],                // Tibetan (with fallback)
-    'tib': ['tib', 'bod'],                // Tibetan (with fallback)
-    'cym': ['cym', 'wel'],                // Welsh (with fallback)
-    'wel': ['wel', 'cym']                 // Welsh (with fallback)
-};
-
 function filterSubtitlesByLanguage(allSubtitles, languageId) {
     if (!allSubtitles) return null;
 
     // Check for language aliases (e.g., Romanian: rum/ron)
-    // The order in the alias array represents preference - first code is most preferred
-    const codesToMatch = languageAliases[languageId] || [languageId];
+    // Uses shared getLanguageAliases() from encoding.js
+    const codesToMatch = getLanguageAliases(languageId);
     const langSubs = allSubtitles.filter(sub => codesToMatch.includes(sub.lang));
 
     if (langSubs.length === 0) {
@@ -511,6 +448,7 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt', languageCode = nu
             timeout: 15000,
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
+        console.log(`Successfully fetched subtitle: ${url}`);
 
         const buffer = Buffer.from(response.data);
 
@@ -525,8 +463,11 @@ async function fetchSubtitleContent(url, sourceFormat = 'srt', languageCode = nu
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
         const subtitleText = decodeSubtitleBuffer(buffer, languageCode);
+        if (!subtitleText) {
+            console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
+            return null;
+        }
 
-        console.log(`Successfully fetched subtitle: ${url}`);
         return subtitleText;
 
     } catch (error) {
@@ -577,6 +518,7 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
             headers: headers,
             maxContentLength: 5 * 1024 * 1024  // 5 MB limit
         });
+        console.log(`Successfully fetched subtitle: ${url}`);
 
         let contentBuffer = Buffer.from(response.data);
         let subtitleText;
@@ -604,6 +546,10 @@ async function fetchSubtitleContentOldAPI(url, sourceFormat = 'srt', cookie = nu
         // legacy encodings via chardet (Windows-1251, ISO-8859-x, etc.), and
         // double-encoded UTF-8 text (e.g., Thai/CJK/Cyrillic showing as mojibake).
         subtitleText = decodeSubtitleBuffer(contentBuffer, languageCode);
+        if (!subtitleText) {
+            console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
+            return null;
+        }
 
         // 3. Convert to SRT if needed
         if (sourceFormat.toLowerCase() !== 'srt') {
@@ -870,7 +816,8 @@ process.on('SIGINT', () => {
                  }
                  // Log the text of the first parsed subtitle entry, if it exists
                  if (subtitles.length > 0) {
-                     console.log(`First parsed subtitle text by SRTParser2: [${subtitles[0].text}]`);
+                     const firstText = subtitles[0].text.replace(/[\r\n]+/g, ' ');
+                     console.log(`First parsed subtitle text by SRTParser2: [${firstText}]`);
                  } else {
                      console.log("SRTParser2 returned an empty array.");
                  }
@@ -1015,36 +962,20 @@ process.on('SIGINT', () => {
                     console.log('✅ Successfully fetched subtitles using OLD API fallback!');
                 }
                 
-                // 2. Select up to 4 unique translation candidates
-                const selectedTransSubs = [];
-                const usedTransUrls = new Set();
-                for (const transSub of transSubInfoList) {
-                    if (selectedTransSubs.length >= 4) break; // Stop if we have 4
-                    if (!usedTransUrls.has(transSub.url)) {
-                        selectedTransSubs.push(transSub);
-                        usedTransUrls.add(transSub.url);
-                        console.log(`Selected translation candidate #${selectedTransSubs.length}: ID=${transSub.id}, Downloads=${transSub.downloads}, URL=${transSub.url}`);
-                    }
-                }
-
-                if (selectedTransSubs.length === 0) {
-                    console.error("Found translation metadata, but failed to select any unique candidates (this shouldn't happen if list was not empty).");
-                    return { subtitles: [], cacheMaxAge: 60 };
-                }
-
-                // 3. Find a valid main subtitle by trying each one from the sorted list
+                // 2. Find a valid main subtitle by trying each one from the sorted list
                 let mainParsed = null;
                 let selectedMainSubInfo = null;
                 for (const mainSubInfo of mainSubInfoList) {
                     console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, Downloads=${mainSubInfo.downloads}`);
                     
                     // Use old API fetch if format is not SRT (indicates old API source)
-                    // Pass mainLang for encoding detection hints
+                    // Pass the actual language code from API response (not user's requested code)
+                    // This ensures proper encoding detection even when user requested an alias
                     let mainSubContent;
                     if (mainSubInfo.format && mainSubInfo.format.toLowerCase() !== 'srt') {
-                        mainSubContent = await fetchSubtitleContentOldAPI(mainSubInfo.url, mainSubInfo.format, cookie, false, mainLang);
+                        mainSubContent = await fetchSubtitleContentOldAPI(mainSubInfo.url, mainSubInfo.format, cookie, false, mainSubInfo.lang);
                     } else {
-                        mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainLang);
+                        mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang);
                     }
                     if (!mainSubContent) {
                         console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
@@ -1070,20 +1001,27 @@ process.on('SIGINT', () => {
                     return { subtitles: [], cacheMaxAge: 60 };
                 }
 
-                // 4. Process Each Selected Translation Subtitle with the valid main subtitle
+                // 3. Process translation candidates until we have 4 successful results
                 const finalSubtitles = [];
-                for (let i = 0; i < selectedTransSubs.length; i++) {
-                    const transSubInfo = selectedTransSubs[i];
-                    const version = i + 1;
+                const usedTransUrls = new Set();
+
+                for (const transSubInfo of transSubInfoList) {
+                    if (finalSubtitles.length >= 4) break;
+
+                    if (usedTransUrls.has(transSubInfo.url)) continue;
+                    usedTransUrls.add(transSubInfo.url);
+
+                    const version = finalSubtitles.length + 1;
                     console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
                     // Use old API fetch if format is not SRT (indicates old API source)
-                    // Pass transLang for encoding detection hints
+                    // Pass the actual language code from API response (not user's requested code)
+                    // This ensures proper encoding detection even when user requested an alias
                     let transSubContent;
                     if (transSubInfo.format && transSubInfo.format.toLowerCase() !== 'srt') {
-                        transSubContent = await fetchSubtitleContentOldAPI(transSubInfo.url, transSubInfo.format, cookie, false, transLang);
+                        transSubContent = await fetchSubtitleContentOldAPI(transSubInfo.url, transSubInfo.format, cookie, false, transSubInfo.lang);
                     } else {
-                        transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transLang);
+                        transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
                     }
                     if (!transSubContent) {
                         console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
