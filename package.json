@@ -2,32 +2,38 @@
   "name": "strelingo-addon",
   "version": "0.1.0",
   "description": "Stremio addon (Strelingo) for dual language subtitles using OpenSubtitles",
-  "main": "index.js",
+  "main": "src/index.ts",
+  "type": "module",
   "scripts": {
-    "start": "node index.js",
+    "start": "npx tsx src/index.ts",
+    "dev": "wrangler dev src/index.ts",
+    "dev:node": "npx tsx watch src/index.ts",
+    "build": "tsc",
+    "deploy": "wrangler deploy src/index.ts",
+    "deploy:vercel": "vercel --prod",
     "test": "node test/encoding.test.js && node test/e2e.test.js",
     "test:encoding": "node test/encoding.test.js",
     "test:e2e": "node test/e2e.test.js"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.8",
     "@supabase/supabase-js": "^2.49.4",
     "@vercel/blob": "^1.0.1",
-    "axios": "^1.9.0",
     "chardet": "^2.1.0",
-    "dotenv": "^17.2.3",
-    "express": "^4.18.2",
-    "franc": "^6.2.0",
     "franc-all": "^7.2.0",
+    "hono": "^4.7.2",
     "iconv-lite": "^0.6.3",
     "iso-639-3": "^3.0.1",
     "pako": "^2.1.0",
-    "sanitize-html": "^2.17.0",
     "srt-parser-2": "^1.2.3",
-    "stremio-addon-sdk": "^1.6.10",
-    "subsrt": "^1.1.1",
-    "subtitle-converter": "^3.0.12"
+    "tsx": "^4.19.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240529.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^3.109.0"
   },
   "engines": {
-    "node": ">=14"
+    "node": ">=18"
   }
 }
