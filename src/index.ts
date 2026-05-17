@@ -346,6 +346,12 @@ function parseLangCode(lang: string | undefined): string | undefined {
     return match ? match[1] : lang;
 }
 
+function getBrowserLanguageOption(acceptLanguageHeader: string | null): string {
+    const code = extractBrowserLanguageFromHeader(acceptLanguageHeader);
+    const name = languageMap[code as keyof typeof languageMap] || 'English';
+    return `${name} [${code}]`;
+}
+
 function stripJsonExtension(str: string | undefined): string {
     if (!str) return '';
     if (str.endsWith('.json')) {
@@ -995,6 +1001,15 @@ app.get('/', (c) => {
 app.get('/configure', (c) => {
     const addonName = getEnvVar(c, 'ADDON_NAME') || 'Strelingo - Dual Language Subtitles';
     const manifest = getManifest(addonName);
+    const browserLangOption = getBrowserLanguageOption(c.req.header('accept-language'));
+    if (manifest.config) {
+        manifest.config = manifest.config.map(item => {
+            if (item.key === 'transLang') {
+                return { ...item, default: browserLangOption };
+            }
+            return item;
+        });
+    }
     return c.html(landingTemplate(manifest));
 });
 
@@ -1012,6 +1027,7 @@ app.get('/:config/configure', (c) => {
         }
     }
 
+    const browserLangOption = getBrowserLanguageOption(c.req.header('accept-language'));
     if (manifest.config) {
         manifest.config = manifest.config.map(item => {
             if (configObj[item.key]) {
@@ -1019,6 +1035,9 @@ app.get('/:config/configure', (c) => {
                     ...item,
                     default: configObj[item.key]
                 };
+            }
+            if (item.key === 'transLang') {
+                return { ...item, default: browserLangOption };
             }
             return item;
         });

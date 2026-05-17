@@ -335,6 +335,25 @@ body::after {
     box-shadow: 0 4px 16px rgba(76, 175, 125, 0.3) !important;
 }
 
+.warning {
+    background: rgba(231, 76, 60, 0.15);
+    border: 1px solid rgba(231, 76, 60, 0.3);
+    color: #ff8a80;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    margin-bottom: 16px;
+    text-align: center;
+    display: none;
+}
+
+.btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    filter: grayscale(0.6);
+    pointer-events: none;
+}
+
 .toast {
     position: fixed;
     bottom: 24px;
@@ -483,6 +502,9 @@ export default function landingTemplate(manifest: Manifest): string {
             <form id="mainForm">
                 ${options}
             </form>
+            <div id="langWarning" class="warning">
+                <strong>Warning:</strong> Main Language and Translation Language cannot be the same. Please select different languages.
+            </div>
             <div class="divider"></div>`;
             script += `
             const updateLink = () => {
@@ -499,8 +521,11 @@ export default function landingTemplate(manifest: Manifest): string {
                 const mainL = mainSel ? mainSel.options[mainSel.selectedIndex].text.split(' [')[0] : ''
                 const transL = transSel ? transSel.options[transSel.selectedIndex].text.split(' [')[0] : ''
                 const langLabel = document.getElementById('langLabel')
+                const langWarning = document.getElementById('langWarning')
+                const isSame = mainL === transL
+
                 if (langLabel && mainL && transL) {
-                    if (mainL === transL) {
+                    if (isSame) {
                         langLabel.textContent = mainL + ' + ' + transL
                         langLabel.style.color = '#e74c3c'
                     } else {
@@ -508,11 +533,41 @@ export default function landingTemplate(manifest: Manifest): string {
                         langLabel.style.color = ''
                     }
                 }
+
+                if (langWarning) {
+                    langWarning.style.display = isSame ? 'block' : 'none'
+                }
+
+                if (isSame) {
+                    installLink.classList.add('btn-disabled')
+                    webInstallLink.classList.add('btn-disabled')
+                } else {
+                    installLink.classList.remove('btn-disabled')
+                    webInstallLink.classList.remove('btn-disabled')
+                }
             }
             mainForm.onchange = updateLink
 
-            installLink.onclick = () => mainForm.reportValidity()
+            installLink.onclick = (e) => {
+                const mainSel = document.getElementById('mainLang')
+                const transSel = document.getElementById('transLang')
+                const mainL = mainSel ? mainSel.options[mainSel.selectedIndex].text.split(' [')[0] : ''
+                const transL = transSel ? transSel.options[transSel.selectedIndex].text.split(' [')[0] : ''
+                if (mainL === transL) {
+                    e.preventDefault()
+                    return false
+                }
+                return mainForm.reportValidity()
+            }
             webInstallLink.addEventListener('click', (e) => {
+                const mainSel = document.getElementById('mainLang')
+                const transSel = document.getElementById('transLang')
+                const mainL = mainSel ? mainSel.options[mainSel.selectedIndex].text.split(' [')[0] : ''
+                const transL = transSel ? transSel.options[transSel.selectedIndex].text.split(' [')[0] : ''
+                if (mainL === transL) {
+                    e.preventDefault()
+                    return false
+                }
                 if (!mainForm.reportValidity()) { e.preventDefault(); return false; }
             })`;
         }
