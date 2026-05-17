@@ -24,10 +24,10 @@ docker compose up -d
 ## Demo Live Addon Url
 You can either add the Stremio addon by copying this and use add addon in stremio:
  ```bash 
- https://strelingo-addon.vercel.app/manifest.json
+ https://strelingo.pronouncetube.com/manifest.json
  ```
 or visit the addon page here:  
-[https://strelingo-addon.vercel.app](https://strelingo-addon.vercel.app).
+[https://strelingo.pronouncetube.com](https://strelingo.pronouncetube.com).
 
 ## Providers
 * OpenSubtitles.
