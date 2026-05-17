@@ -1,0 +1,14 @@
+{
+  "name": "strelingo-addon",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-07",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "ENABLE_DIRECT_SERVING": "true"
+  }
+}

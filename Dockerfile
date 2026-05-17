@@ -5,8 +5,8 @@ WORKDIR /app
 # Copy package files first for better layer caching
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install --omit=dev
+# Install all dependencies (including tsx for running TypeScript)
+RUN npm install
 
 # Copy source code
 COPY . .
@@ -14,5 +14,5 @@ COPY . .
 # Expose the default port
 EXPOSE 7000
 
-# Run the addon
-CMD ["npm", "start"]
+# Run the addon with tsx
+CMD ["npx", "tsx", "src/index.ts"]

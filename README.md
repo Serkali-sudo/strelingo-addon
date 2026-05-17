@@ -4,10 +4,22 @@ This Stremio addon fetches subtitles for movies and series from OpenSubtitles an
 
 ![Ekran görüntüsü 2025-04-18 142351](https://github.com/user-attachments/assets/d2441e6c-82b7-4115-876d-1af0e419f6df)
 
-## Easy deploy to vercel
-You can easily deploy this addon and host it yourself on vercel by clicking button below. The free hobby plan is more than enough for personal uses. You may need to setup vercel blob storage btw.
+## Deployment
+
+### Cloudflare Workers
+Deploy to Cloudflare Workers in one click:
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Serkali-sudo/strelingo-addon)
+
+### Vercel
+You can easily deploy this addon and host it yourself on Vercel by clicking the button below. The free hobby plan is more than enough for personal use. You may need to set up Vercel Blob storage.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/Serkali-sudo/strelingo-addon)
+
+### Docker
+```bash
+docker compose up -d
+```
 
 ## Demo Live Addon Url
 You can either add the Stremio addon by copying this and use add addon in stremio:
@@ -36,13 +48,14 @@ or visit the addon page here:
 
 ## Requirements
 
-*   [Node.js](https://nodejs.org/) (Version 14 or higher recommended)
-*   [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
-*   You will need either vercel blob key or supabase storage credentials. Because the addon creates a brand new srt everytime and it has to host somewhere. you can put those credentials in .env (You can techinally return the subtitle as base64 but i have found that it only works for stremio 4 version, it didnt worked in stremio 5 or mobile stremio)
+*   [Node.js](https://nodejs.org/) (Version 18 or higher)
+*   [npm](https://www.npmjs.com/)
+*   You will need either Vercel Blob key, Supabase storage credentials, or enable **Direct Serving** (self-hosted). Because the addon creates a brand new SRT every time and it has to host somewhere. You can put those credentials in `.env`. (You can technically return the subtitle as base64 but it only works for Stremio 4, not Stremio 5 or mobile Stremio.)
 *   **Storage Configuration** - You need to choose at least one storage option. Configure your choice via the `.env` file (see [`.env.example`](.env.example) for all options):
     *   **Option 1: Vercel Blob** (cloud) - Create a Vercel Blob in [Vercel Dashboard](https://vercel.com/dashboard/stores), copy the token, and put it in your `.env` as `BLOB_READ_WRITE_TOKEN`
     *   **Option 2: Supabase Storage** (cloud) - Get `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` from your [Supabase project settings](https://app.supabase.com) and add them to your `.env`
     *   **Option 3: Local File Storage** (self-hosted) - Set `LOCAL_STORAGE_DIR=./subtitles` in your `.env`. Useful for running on your home network or private server.
+    *   **Option 4: Direct Serving** (self-hosted / Cloudflare Workers) - Set `ENABLE_DIRECT_SERVING=true` in your `.env`. Serves merged subtitles directly from the addon instance without using external storage. Best for self-hosted setups or Cloudflare Workers.
 
 ## Local Setup
 
@@ -66,18 +79,22 @@ or visit the addon page here:
 
 ## Running the Addon Locally
 
-1.  **Start the addon server:**
-    ```bash
-    npm start
-    # or
-    # yarn start
-    ```
-2.  The console will output messages indicating the server is running.
+Start the addon server locally:
+```bash
+npm start
+```
+
+Or run in development mode with auto-reload:
+```bash
+npm run dev:node
+```
+
+The addon will be available at `http://localhost:7000/manifest.json`.
 
 ## Installing and Configuring in Stremio
 
 1.  Ensure the addon server is running locally (see "Running the Addon Locally").
-2.  Open your web browser and navigate to the addon's local address (usually `http://localhost:7000/` or the address shown in the console when you start the server).
+2.  Open your web browser and navigate to the addon's local address (usually `http://localhost:7000/` or the address shown in the console when you start it).
 3.  On the addon configuration page that loads:
     *   Select your desired **Main Language** (typically the language the audio is in).
     *   Select your desired **Translation Language** (typically your native language or the one you want for comparison).
@@ -103,11 +120,11 @@ Tests validate that decoded subtitles contain expected native-language strings (
 
 ## Technical Details
 
-*   **Backend:** Node.js
-*   **Stremio SDK:** `stremio-addon-sdk`
-*   **Subtitle Source:** OpenSubtitles API, [Buta no subs Stremio addon](https://github.com/Pigamer37/buta-no-subs-stremio-addon)
-*   **HTTP Requests:** `axios`
-*   **Subtitle Parsing:** `srt-parser-2`
+*   **Backend:** Node.js + TypeScript
+*   **Framework:** Hono (works on Vercel, Cloudflare Workers, and Node.js)
+*   **Subtitle Source:** OpenSubtitles API, [Buta no Subs Stremio addon](https://github.com/Pigamer37/buta-no-subs-stremio-addon)
+*   **HTTP Requests:** Native fetch
+*   **Subtitle Parsing:** `srt-parser-2` + built-in multi-format converter
 *   **Gzip Decompression:** `pako`
 *   **Character Encoding Detection:** `chardet`
 *   **Character Encoding Decoding:** `iconv-lite`
