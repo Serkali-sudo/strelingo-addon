@@ -401,7 +401,7 @@ async function fetchAllSubtitles(
     if (type === 'series' && baseSearchParams.season && baseSearchParams.episode) {
         apiUrl += `:${baseSearchParams.season}:${baseSearchParams.episode}`;
     } else {
-        // apiUrl += `:${videoParams.videoHash || '0'}`;
+        apiUrl += `:${videoParams.videoHash || '0'}`;
     }
 
     const queryParams: string[] = [];
