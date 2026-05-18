@@ -33,7 +33,7 @@ export const ISO639_3_TO_1: Record<string, string> = {
     'est': 'et', 'fin': 'fi',
     'geo': 'ka', 'kat': 'ka',
     'gla': 'gd', 'gle': 'ga', 'glg': 'gl',
-    'hrv': 'hr', 'hun': 'hu',
+    'hrv': 'hr', 'hat': 'ht', 'hun': 'hu',
     'ice': 'is', 'isl': 'is',
     'lav': 'lv', 'lit': 'lt',
     'mac': 'mk', 'mkd': 'mk',
