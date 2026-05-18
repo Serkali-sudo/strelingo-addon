@@ -51,78 +51,100 @@ body {
     position: absolute;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
     font-weight: 600;
     font-size: 15px;
-    line-height: 1.3;
-    text-shadow: 0 2px 12px rgba(0,0,0,0.8);
+    line-height: 1.35;
     white-space: nowrap;
     opacity: 0;
     will-change: transform, opacity;
+    letter-spacing: 0.3px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: rgba(0,0,0,0.15);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    border: 1px solid rgba(255,255,255,0.04);
 }
 
 .subtitle-line-1 {
     color: #ffffff;
+    text-shadow: 0 0 18px rgba(255,255,255,0.35), 0 2px 10px rgba(0,0,0,0.9);
 }
 
 .subtitle-line-2 {
     color: #f1c40f;
+    text-shadow: 0 0 18px rgba(241,196,15,0.45), 0 2px 10px rgba(0,0,0,0.9);
+}
+
+.cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.05em;
+    background: currentColor;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 0.75s step-end infinite;
+}
+
+@keyframes blink {
+    50% { opacity: 0; }
 }
 
 @keyframes floatUp1 {
     0% { transform: translateY(110vh) translateX(0) rotate(-1deg); opacity: 0; }
-    8% { opacity: 0.55; }
-    92% { opacity: 0.55; }
+    8% { opacity: 0.6; }
+    92% { opacity: 0.6; }
     100% { transform: translateY(-20vh) translateX(40px) rotate(1deg); opacity: 0; }
 }
 
 @keyframes floatUp2 {
     0% { transform: translateY(110vh) translateX(0) rotate(1.5deg); opacity: 0; }
-    10% { opacity: 0.45; }
-    90% { opacity: 0.45; }
+    10% { opacity: 0.5; }
+    90% { opacity: 0.5; }
     100% { transform: translateY(-20vh) translateX(-30px) rotate(-1deg); opacity: 0; }
 }
 
 @keyframes floatUp3 {
     0% { transform: translateY(110vh) translateX(0) rotate(-0.5deg); opacity: 0; }
-    6% { opacity: 0.5; }
-    94% { opacity: 0.5; }
+    6% { opacity: 0.55; }
+    94% { opacity: 0.55; }
     100% { transform: translateY(-20vh) translateX(20px) rotate(0.5deg); opacity: 0; }
 }
 
 @keyframes floatUp4 {
     0% { transform: translateY(110vh) translateX(0) rotate(2deg); opacity: 0; }
-    12% { opacity: 0.4; }
-    88% { opacity: 0.4; }
+    12% { opacity: 0.45; }
+    88% { opacity: 0.45; }
     100% { transform: translateY(-20vh) translateX(-50px) rotate(-2deg); opacity: 0; }
 }
 
 @keyframes floatUp5 {
     0% { transform: translateY(110vh) translateX(0) rotate(-1.5deg); opacity: 0; }
-    9% { opacity: 0.48; }
-    91% { opacity: 0.48; }
+    9% { opacity: 0.52; }
+    91% { opacity: 0.52; }
     100% { transform: translateY(-20vh) translateX(35px) rotate(1.5deg); opacity: 0; }
 }
 
 @keyframes floatUp6 {
     0% { transform: translateY(110vh) translateX(0) rotate(0.5deg); opacity: 0; }
-    7% { opacity: 0.52; }
-    93% { opacity: 0.52; }
+    7% { opacity: 0.58; }
+    93% { opacity: 0.58; }
     100% { transform: translateY(-20vh) translateX(-20px) rotate(-0.5deg); opacity: 0; }
 }
 
 @keyframes floatUp7 {
     0% { transform: translateY(110vh) translateX(0) rotate(-2deg); opacity: 0; }
-    11% { opacity: 0.38; }
-    89% { opacity: 0.38; }
+    11% { opacity: 0.42; }
+    89% { opacity: 0.42; }
     100% { transform: translateY(-20vh) translateX(45px) rotate(2deg); opacity: 0; }
 }
 
 @keyframes floatUp8 {
     0% { transform: translateY(110vh) translateX(0) rotate(1deg); opacity: 0; }
-    8% { opacity: 0.42; }
-    92% { opacity: 0.42; }
+    8% { opacity: 0.48; }
+    92% { opacity: 0.48; }
     100% { transform: translateY(-20vh) translateX(-35px) rotate(-1deg); opacity: 0; }
 }
 
@@ -662,8 +684,8 @@ export default function landingTemplate(manifest: Manifest): string {
 
     const subtitlePairs = [
         { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '5%' },
-        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '4s', left: '55%' },
-        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '8s', left: '25%' },
+        { l1: "I'll be back", l2: '我会回来的', anim: 'floatUp2', dur: '22s', delay: '4s', left: '55%' },
+        { l1: 'To infinity and beyond', l2: 'अनंत और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '8s', left: '25%' },
         { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '12s', left: '70%' },
         { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '2s', left: '40%' },
         { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '6s', left: '10%' },
@@ -673,12 +695,64 @@ export default function landingTemplate(manifest: Manifest): string {
         { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp2', dur: '25s', delay: '18s', left: '15%' },
         { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp3', dur: '31s', delay: '20s', left: '50%' },
         { l1: 'Here\'s looking at you, kid', l2: 'ดูที่เธอสิ เด็กน้อย', anim: 'floatUp4', dur: '23s', delay: '22s', left: '80%' },
+        { l1: 'I\'m the king of the world', l2: 'Je suis le roi du monde', anim: 'floatUp5', dur: '27s', delay: '1s', left: '12%' },
+        { l1: 'My precious', l2: 'Kho báu của ta', anim: 'floatUp6', dur: '33s', delay: '3s', left: '45%' },
+        { l1: 'Say hello to my little friend', l2: 'Poznaj mojego małego przyjaciela', anim: 'floatUp7', dur: '21s', delay: '5s', left: '65%' },
+        { l1: 'Bond, James Bond', l2: 'Μποντ, Τζέιμς Μποντ', anim: 'floatUp8', dur: '35s', delay: '7s', left: '20%' },
+        { l1: 'E.T. phone home', l2: 'א.טי. התקשר הביתה', anim: 'floatUp1', dur: '24s', delay: '9s', left: '85%' },
+        { l1: 'Houston, we have a problem', l2: 'Houston, vi har ett problem', anim: 'floatUp2', dur: '30s', delay: '11s', left: '30%' },
+        { l1: 'Life is like a box of chocolates', l2: 'Život je jako bonboniéra', anim: 'floatUp3', dur: '26s', delay: '13s', left: '58%' },
+        { l1: 'Show me the money', l2: 'Arată-mi banii', anim: 'floatUp4', dur: '22s', delay: '15s', left: '8%' },
+        { l1: 'I love the smell of napalm', l2: 'Imádom a reggeli napalm szagát', anim: 'floatUp5', dur: '28s', delay: '17s', left: '72%' },
+        { l1: 'You can\'t handle the truth', l2: 'Du kan ikke klare sandheden', anim: 'floatUp6', dur: '32s', delay: '19s', left: '38%' },
+        { l1: 'Keep your friends close', l2: 'Panatilihing malapit ang mga kaibigan', anim: 'floatUp7', dur: '25s', delay: '21s', left: '90%' },
+        { l1: 'I feel the need for speed', l2: 'আমি গতির প্রয়োজনীয়তা অনুভব করছি', anim: 'floatUp8', dur: '29s', delay: '23s', left: '3%' },
+        { l1: 'Nobody\'s perfect', l2: 'هیچ‌کس کامل نیست', anim: 'floatUp1', dur: '31s', delay: '0.5s', left: '48%' },
+        { l1: 'Wax on, wax off', l2: 'Paka juu, paka chini', anim: 'floatUp2', dur: '27s', delay: '2.5s', left: '68%' },
+        { l1: 'You had me at hello', l2: 'تم نے مجھے ہیلو سے ہی جیت لیا', anim: 'floatUp3', dur: '23s', delay: '4.5s', left: '15%' },
+        { l1: 'Elementary, my dear Watson', l2: 'એલિમેન્ટરી, મારા પ્રિય વોટ્સન', anim: 'floatUp4', dur: '33s', delay: '6.5s', left: '78%' },
+        { l1: 'It\'s alive', l2: 'ಅದು ಜೀವಂತವಾಗಿದೆ!', anim: 'floatUp5', dur: '21s', delay: '8.5s', left: '42%' },
+        { l1: 'I\'m walking here', l2: 'ഞാൻ ഇവിടെ നടക്കുന്നു!', anim: 'floatUp6', dur: '35s', delay: '10.5s', left: '62%' },
+        { l1: 'Go ahead, make my day', l2: 'पुढे जा, माझा दिवस उजळव', anim: 'floatUp7', dur: '24s', delay: '12.5s', left: '28%' },
+        { l1: 'They may take our lives', l2: 'ਉਹ ਸਾਡੀਆਂ ਜਾਨਾਂ ਲੈ ਸਕਦੇ ਹਨ', anim: 'floatUp8', dur: '30s', delay: '14.5s', left: '88%' },
+        { l1: 'A martini. Shaken, not stirred', l2: '一杯馬丁尼。搖勻，不要攪拌', anim: 'floatUp1', dur: '26s', delay: '16.5s', left: '18%' },
+        { l1: 'Round up the usual suspects', l2: 'اجمع المشتبه بهم المعتادين', anim: 'floatUp2', dur: '34s', delay: '18.5s', left: '52%' },
+        { l1: 'Fasten your seatbelts', l2: 'अपनी सीटबेल्ट बांध लीजिए', anim: 'floatUp3', dur: '20s', delay: '20.5s', left: '82%' },
+        { l1: 'If you build it, he will come', l2: '建てれば、彼は来る', anim: 'floatUp4', dur: '28s', delay: '22.5s', left: '7%' },
+        { l1: 'I am Groot', l2: 'Я есть Грут', anim: 'floatUp5', dur: '32s', delay: '24.5s', left: '37%' },
+        { l1: 'Winter is coming', l2: 'زمستان در راه است', anim: 'floatUp6', dur: '25s', delay: '26.5s', left: '67%' },
+        { l1: 'With great power', l2: 'महान शक्ति के साथ महान जिम्मेदारी', anim: 'floatUp7', dur: '29s', delay: '28.5s', left: '93%' },
+        { l1: 'I am inevitable', l2: 'ข้าหลีกเลี่ยงไม่ได้', anim: 'floatUp8', dur: '31s', delay: '30.5s', left: '22%' },
+        { l1: 'I am Iron Man', l2: 'Sono Iron Man', anim: 'floatUp1', dur: '27s', delay: '32.5s', left: '57%' },
+        { l1: 'Wakanda forever', l2: 'واكندا للأبد', anim: 'floatUp2', dur: '23s', delay: '34.5s', left: '83%' },
+        { l1: 'Why do we fall?', l2: 'Neden düşeriz?', anim: 'floatUp3', dur: '36s', delay: '36.5s', left: '13%' },
+        { l1: 'I see you', l2: 'Jag ser dig', anim: 'floatUp4', dur: '28s', delay: '38.5s', left: '47%' },
+        { l1: 'Hakuna matata', l2: 'Tiada masalah', anim: 'floatUp5', dur: '22s', delay: '40.5s', left: '73%' },
+        { l1: 'Carpe diem', l2: 'Petik harinya', anim: 'floatUp6', dur: '30s', delay: '42.5s', left: '33%' },
+        { l1: 'To boldly go', l2: 'ดิ้นรนไปอย่างกล้าหาญ', anim: 'floatUp7', dur: '24s', delay: '44.5s', left: '95%' },
+        { l1: 'Rosebud', l2: '장미봉오리', anim: 'floatUp8', dur: '35s', delay: '46.5s', left: '2%' },
+        { l1: 'Toto, we\'re not in Kansas', l2: 'Тото, ми вже не в Канзасі', anim: 'floatUp1', dur: '26s', delay: '48.5s', left: '53%' },
+        { l1: 'You complete me', l2: 'Du vervollständigst mich', anim: 'floatUp2', dur: '33s', delay: '50.5s', left: '77%' },
+        { l1: 'Magic mirror on the wall', l2: 'Tükör, tükör, mondd meg nékem', anim: 'floatUp3', dur: '21s', delay: '52.5s', left: '17%' },
+        { l1: 'Open the pod bay doors', l2: 'Abram as comportas da baía', anim: 'floatUp4', dur: '29s', delay: '54.5s', left: '44%' },
+        { l1: 'Toto, I have a feeling', l2: 'トト、カンザスにいない気がする', anim: 'floatUp5', dur: '25s', delay: '56.5s', left: '86%' },
+        { l1: 'I want to play a game', l2: 'Quiero jugar un juego', anim: 'floatUp6', dur: '31s', delay: '58.5s', left: '26%' },
+        { l1: 'We are Groot', l2: '우리는 그루트다', anim: 'floatUp7', dur: '27s', delay: '60.5s', left: '63%' },
+        { l1: 'Adventure is out there', l2: 'Petualangan ada di luar sana', anim: 'floatUp8', dur: '34s', delay: '62.5s', left: '92%' },
+        { l1: 'I volunteer as tribute', l2: 'Jag erbjuder mig som tribut', anim: 'floatUp1', dur: '23s', delay: '64.5s', left: '11%' },
+        { l1: 'Expecto patronum', l2: ' এক্সপেক্টো প্যাট্রোনাম', anim: 'floatUp2', dur: '36s', delay: '66.5s', left: '41%' },
+        { l1: 'After all this time?', l2: 'Selama ini?', anim: 'floatUp3', dur: '20s', delay: '68.5s', left: '71%' },
+        { l1: 'Always', l2: 'Toujours', anim: 'floatUp4', dur: '32s', delay: '70.5s', left: '6%' },
+        { l1: 'Why is the rum gone?', l2: 'Rượu rum đâu rồi?', anim: 'floatUp5', dur: '28s', delay: '72.5s', left: '59%' },
+        { l1: 'I am the captain now', l2: 'Sasa mimi ni nahodha', anim: 'floatUp6', dur: '24s', delay: '74.5s', left: '89%' },
+        { l1: 'Chewie, we\'re home', l2: 'چیوی، ما خونه‌ایم', anim: 'floatUp7', dur: '30s', delay: '76.5s', left: '24%' },
+        { l1: 'I\'m flying, Jack', l2: 'Uçuyorum, Jack', anim: 'floatUp8', dur: '26s', delay: '78.5s', left: '56%' },
     ];
 
     const subtitleBgHTML = subtitlePairs.map((p, i) =>
-        `<div class="subtitle-pair" style="left:${p.left};animation:${p.anim} ${p.dur} linear ${p.delay} infinite;">` +
-        `<span class="subtitle-line-1">${p.l1}</span>` +
-        `<span class="subtitle-line-2">${p.l2}</span>` +
+        `<div class="subtitle-pair" data-l1="${p.l1}" data-l2="${p.l2}" style="left:${p.left};animation:${p.anim} ${p.dur} linear ${p.delay} infinite;">` +
+        `<span class="subtitle-line-1"></span>` +
+        `<span class="subtitle-line-2"></span>` +
         `</div>`
     ).join('\n');
 
@@ -750,6 +824,53 @@ export default function landingTemplate(manifest: Manifest): string {
                 document.body.removeChild(textArea)
             }
         }
+
+        ;(function(){
+            const pairs = document.querySelectorAll('.subtitle-pair');
+            pairs.forEach(pair => {
+                const l1 = pair.dataset.l1 || '';
+                const l2 = pair.dataset.l2 || '';
+                const style = pair.style.animation;
+                const parts = style.match(/([\w\d]+)\s+([\d.]+)s\s+\w+\s+([\d.]+)s/);
+                if (!parts) return;
+                const dur = parseFloat(parts[2]) * 1000;
+                const delay = parseFloat(parts[3]) * 1000;
+                let interval;
+
+                function startTyping() {
+                    clearInterval(interval);
+                    let charIndex = 0;
+                    let typingLine = 1;
+                    pair.innerHTML = '<span class="subtitle-line-1"><span class="cursor"></span></span>';
+
+                    interval = setInterval(() => {
+                        const target = typingLine === 1 ? l1 : l2;
+                        if (charIndex <= target.length) {
+                            const line1Text = typingLine === 1 ? target.slice(0, charIndex) : l1;
+                            const line2Text = typingLine === 2 ? target.slice(0, charIndex) : '';
+                            let html = '<span class="subtitle-line-1">' + line1Text + (typingLine === 1 ? '<span class="cursor"></span>' : '') + '</span>';
+                            if (typingLine === 2 || charIndex === target.length && typingLine === 1) {
+                                html += '<span class="subtitle-line-2">' + line2Text + '<span class="cursor"></span></span>';
+                            }
+                            pair.innerHTML = html;
+                            charIndex++;
+                        } else if (typingLine === 1) {
+                            typingLine = 2;
+                            charIndex = 0;
+                        } else {
+                            clearInterval(interval);
+                            pair.innerHTML = '<span class="subtitle-line-1">' + l1 + '</span><span class="subtitle-line-2">' + l2 + '<span class="cursor"></span></span>';
+                        }
+                    }, 42);
+                }
+
+                setTimeout(startTyping, delay + 2000);
+                setInterval(() => {
+                    clearInterval(interval);
+                    startTyping();
+                }, dur);
+            });
+        })();
 
         if (typeof updateLink === 'function') {
             updateLink()
