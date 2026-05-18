@@ -7,6 +7,7 @@
  *   npx tsx test/e2e.test.ts --skip-clear # Don't clear subtitle cache
  */
 
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
@@ -24,29 +25,6 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Load .env file manually (dotenv not needed)
-function loadEnvFile(envPath: string): void {
-    if (!fs.existsSync(envPath)) return;
-    const content = fs.readFileSync(envPath, 'utf8');
-    for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eqIdx = trimmed.indexOf('=');
-        if (eqIdx === -1) continue;
-        const key = trimmed.slice(0, eqIdx).trim();
-        let value = trimmed.slice(eqIdx + 1).trim();
-        // Remove surrounding quotes
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1);
-        }
-        if (!(key in process.env)) {
-            process.env[key] = value;
-        }
-    }
-}
-
-loadEnvFile(path.join(__dirname, '..', '.env'));
 
 // === Configuration ===
 const PROJECT_DIR = path.resolve(__dirname, '..');

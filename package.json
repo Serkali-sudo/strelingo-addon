@@ -20,6 +20,7 @@
     "@supabase/supabase-js": "2.105.4",
     "@vercel/blob": "2.3.3",
     "chardet": "2.1.1",
+    "dotenv": "17.4.2",
     "franc-all": "7.2.0",
     "hono": "4.12.19",
     "iconv-lite": "0.7.2",
