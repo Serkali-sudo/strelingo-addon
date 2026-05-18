@@ -16,22 +16,22 @@
     "test:e2e": "node test/e2e.test.js"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.8",
-    "@supabase/supabase-js": "^2.49.4",
-    "@vercel/blob": "^1.0.1",
-    "chardet": "^2.1.0",
-    "franc-all": "^7.2.0",
-    "hono": "^4.7.2",
-    "iconv-lite": "^0.6.3",
-    "iso-639-3": "^3.0.1",
-    "pako": "^2.1.0",
-    "srt-parser-2": "^1.2.3",
-    "tsx": "^4.19.4"
+    "@hono/node-server": "2.0.2",
+    "@supabase/supabase-js": "2.105.4",
+    "@vercel/blob": "2.3.3",
+    "chardet": "2.1.1",
+    "franc-all": "7.2.0",
+    "hono": "4.12.19",
+    "iconv-lite": "0.7.2",
+    "iso-639-3": "3.0.1",
+    "pako": "2.1.0",
+    "srt-parser-2": "1.2.3",
+    "tsx": "4.22.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240529.0",
-    "typescript": "^5.0.0",
-    "wrangler": "^3.109.0"
+    "@cloudflare/workers-types": "4.20260518.1",
+    "typescript": "6.0.3",
+    "wrangler": "4.92.0"
   },
   "engines": {
     "node": ">=18"
