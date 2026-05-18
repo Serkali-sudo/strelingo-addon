@@ -42,8 +42,9 @@ body {
 .subtitle-bg {
     position: fixed;
     inset: 0;
-    z-index: 0;
+    z-index: -2;
     overflow: hidden;
+    pointer-events: none;
 }
 
 .subtitle-pair {
@@ -59,9 +60,6 @@ body {
     white-space: nowrap;
     opacity: 0;
     will-change: transform, opacity;
-    cursor: pointer;
-    pointer-events: auto;
-    transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
 .subtitle-line-1 {
@@ -70,30 +68,6 @@ body {
 
 .subtitle-line-2 {
     color: #f1c40f;
-}
-
-.subtitle-pair:hover {
-    transform: scale(1.08);
-    z-index: 1;
-}
-
-.subtitle-pair.popped {
-    opacity: 0 !important;
-    transform: scale(1.4) !important;
-    pointer-events: none;
-}
-
-.particle {
-    position: fixed;
-    border-radius: 50%;
-    pointer-events: none;
-    z-index: 9999;
-    will-change: transform, opacity;
-}
-
-@keyframes particleBurst {
-    0% { transform: translate(0, 0) scale(1); opacity: 1; }
-    100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
 }
 
 @keyframes floatUp1 {
@@ -152,6 +126,34 @@ body {
     100% { transform: translateY(-20vh) translateX(-35px) rotate(-1deg); opacity: 0; }
 }
 
+@keyframes floatUp9 {
+    0% { transform: translateY(110vh) translateX(0) rotate(-3deg); opacity: 0; }
+    7% { opacity: 0.45; }
+    93% { opacity: 0.45; }
+    100% { transform: translateY(-20vh) translateX(55px) rotate(1deg); opacity: 0; }
+}
+
+@keyframes floatUp10 {
+    0% { transform: translateY(110vh) translateX(0) rotate(2.5deg); opacity: 0; }
+    9% { opacity: 0.4; }
+    91% { opacity: 0.4; }
+    100% { transform: translateY(-20vh) translateX(-45px) rotate(-2deg); opacity: 0; }
+}
+
+@keyframes floatUp11 {
+    0% { transform: translateY(110vh) translateX(0) rotate(-0.8deg); opacity: 0; }
+    6% { opacity: 0.5; }
+    94% { opacity: 0.5; }
+    100% { transform: translateY(-20vh) translateX(30px) rotate(0.8deg); opacity: 0; }
+}
+
+@keyframes floatUp12 {
+    0% { transform: translateY(110vh) translateX(0) rotate(1.8deg); opacity: 0; }
+    10% { opacity: 0.36; }
+    90% { opacity: 0.36; }
+    100% { transform: translateY(-20vh) translateX(-60px) rotate(-1.5deg); opacity: 0; }
+}
+
 body::after {
     content: '';
     position: fixed;
@@ -164,7 +166,6 @@ body::after {
 
 .card {
     position: relative;
-    z-index: 10;
     width: 100%;
     max-width: 480px;
     background: var(--surface);
@@ -688,34 +689,46 @@ export default function landingTemplate(manifest: Manifest): string {
         : '';
 
     const subtitlePairs = [
-        { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '2%' },
-        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '1.4s', left: '5.5%' },
-        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '2.8s', left: '9%' },
-        { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '4.2s', left: '12.5%' },
-        { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '5.6s', left: '16%' },
-        { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '7.0s', left: '19.5%' },
-        { l1: 'You talkin\' to me?', l2: '俺に話しかけてるのか？', anim: 'floatUp7', dur: '20s', delay: '8.4s', left: '23%' },
-        { l1: 'Just keep swimming', l2: '그냥 계속 헤엄쳐', anim: 'floatUp8', dur: '34s', delay: '9.8s', left: '26.5%' },
-        { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp1', dur: '29s', delay: '11.2s', left: '30%' },
-        { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp2', dur: '25s', delay: '12.6s', left: '33.5%' },
-        { l1: 'My precious', l2: 'Tana yassen', anim: 'floatUp3', dur: '31s', delay: '14.0s', left: '37%' },
-        { l1: 'I love you 3000', l2: 'Seni 3000 kere seviyorum', anim: 'floatUp4', dur: '23s', delay: '15.4s', left: '40.5%' },
-        { l1: 'Wakanda forever', l2: 'וואקנדה לנצח', anim: 'floatUp5', dur: '27s', delay: '16.8s', left: '44%' },
-        { l1: 'Live long and prosper', l2: 'За долг живот и просперитет', anim: 'floatUp6', dur: '33s', delay: '18.2s', left: '47.5%' },
-        { l1: 'No capes!', l2: 'بدون أردية!', anim: 'floatUp7', dur: '21s', delay: '19.6s', left: '51%' },
-        { l1: 'I am inevitable', l2: 'Eu sou inevitável', anim: 'floatUp8', dur: '35s', delay: '21.0s', left: '54.5%' },
-        { l1: 'I am the captain now', l2: 'Теперь я капитан', anim: 'floatUp1', dur: '19s', delay: '22.4s', left: '58%' },
-        { l1: 'Show me the money!', l2: 'Pénzt akarok látni!', anim: 'floatUp2', dur: '37s', delay: '23.8s', left: '61.5%' },
-        { l1: 'I feel the need for speed', l2: 'Rýchlosť potrebujem', anim: 'floatUp3', dur: '28s', delay: '25.2s', left: '65%' },
-        { l1: 'You know nothing', l2: 'Ty nic nevíš', anim: 'floatUp4', dur: '22s', delay: '26.6s', left: '68.5%' },
-        { l1: 'How you doin\'?', l2: 'Come va?', anim: 'floatUp5', dur: '32s', delay: '28.0s', left: '72%' },
-        { l1: 'Expecto Patronum', l2: 'إكسبيكتو باترونوم', anim: 'floatUp6', dur: '26s', delay: '29.4s', left: '75.5%' },
-        { l1: 'Wilson!', l2: 'ويلسون!', anim: 'floatUp7', dur: '24s', delay: '30.8s', left: '79%' },
-        { l1: "There's no place like home", l2: 'Kein Ort wie zu Hause', anim: 'floatUp8', dur: '30s', delay: '32.2s', left: '82.5%' },
-        { l1: 'Houston, we have a problem', l2: 'ह्यूस्टन, हमारी एक समस्या है', anim: 'floatUp1', dur: '20s', delay: '33.6s', left: '86%' },
-        { l1: 'It\'s alive!', l2: 'Het leeft!', anim: 'floatUp2', dur: '34s', delay: '35.0s', left: '89.5%' },
-        { l1: 'I am vengeance', l2: 'Jestem zemstą', anim: 'floatUp3', dur: '25s', delay: '36.4s', left: '93%' },
-        { l1: 'Magic mirror on the wall', l2: 'Gương kia ngự ở trên tường', anim: 'floatUp4', dur: '29s', delay: '37.8s', left: '96.5%' },
+        { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '5%' },
+        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '4s', left: '55%' },
+        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '8s', left: '25%' },
+        { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '12s', left: '70%' },
+        { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '2s', left: '40%' },
+        { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '6s', left: '10%' },
+        { l1: 'You talkin\' to me?', l2: '俺に話しかけてるのか？', anim: 'floatUp7', dur: '20s', delay: '10s', left: '60%' },
+        { l1: "There's no place like home", l2: 'Kein Ort wie zu Hause', anim: 'floatUp8', dur: '34s', delay: '14s', left: '35%' },
+        { l1: 'Just keep swimming', l2: '그냥 계속 헤엄쳐', anim: 'floatUp1', dur: '29s', delay: '16s', left: '75%' },
+        { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp2', dur: '25s', delay: '18s', left: '15%' },
+        { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp3', dur: '31s', delay: '20s', left: '50%' },
+        { l1: 'Here\'s looking at you, kid', l2: 'ดูที่เธอสิ เด็กน้อย', anim: 'floatUp4', dur: '23s', delay: '22s', left: '80%' },
+        { l1: 'Life is like a box of chocolates', l2: 'La vie est comme une boîte de chocolats', anim: 'floatUp5', dur: '27s', delay: '3s', left: '18%' },
+        { l1: 'ET phone home', l2: 'Mammad evə zəng edir', anim: 'floatUp6', dur: '21s', delay: '7s', left: '62%' },
+        { l1: 'After all, tomorrow is another day', l2: 'سواء كان غداً يوم اخر', anim: 'floatUp7', dur: '33s', delay: '11s', left: '42%' },
+        { l1: 'Show me the money', l2: 'Pokaż mi pieniądze', anim: 'floatUp8', dur: '24s', delay: '15s', left: '3%' },
+        { l1: 'You can\'t handle the truth', l2: 'سzt 자네는 진실을 감당 못 해', anim: 'floatUp1', dur: '26s', delay: '19s', left: '72%' },
+        { l1: 'I\'ll have what she\'s having', l2: 'أريد ما طلبته هي', anim: 'floatUp2', dur: '30s', delay: '5s', left: '30%' },
+        { l1: 'Houston, we have a problem', l2: 'Xyustonda muammo bor', anim: 'floatUp3', dur: '22s', delay: '9s', left: '48%' },
+        { l1: 'E.T. phone home', l2: 'E.T. gọi về nhà', anim: 'floatUp4', dur: '34s', delay: '13s', left: '88%' },
+        { l1: 'My precious', l2: '我的宝贝', anim: 'floatUp5', dur: '18s', delay: '17s', left: '22%' },
+        { l1: 'Freedom!', l2: 'آزادی!', anim: 'floatUp6', dur: '20s', delay: '1s', left: '58%' },
+        { l1: 'Open the pod bay doors', l2: 'Öffne die Pod-Bay-Türen', anim: 'floatUp7', dur: '28s', delay: '21s', left: '8%' },
+        { l1: 'I feel the need for speed', l2: 'Siento la necesidad de velocidad', anim: 'floatUp8', dur: '23s', delay: '23s', left: '68%' },
+        { l1: 'Go ahead, make my day', l2: 'Avanti, mi faccia il piacere', anim: 'floatUp1', dur: '29s', delay: '25s', left: '37%' },
+        { l1: 'I\'m king of the world!', l2: 'मैं दुनिया का बादशाह हूँ!', anim: 'floatUp2', dur: '25s', delay: '27s', left: '53%' },
+        { l1: 'Nobody puts Baby in a corner', l2: 'Ninguém põe a Baby num canto', anim: 'floatUp3', dur: '31s', delay: '29s', left: '82%' },
+        { l1: 'They may take our lives', l2: 'Вони можуть забрати наші життя', anim: 'floatUp4', dur: '19s', delay: '31s', left: '12%' },
+        { l1: 'Do or do not, there is no try', l2: 'やってやるか、やらないかだ', anim: 'floatUp5', dur: '35s', delay: '33s', left: '44%' },
+        { l1: 'Say hello to my little friend', l2: 'Diga olá ao meu pequeno amigo', anim: 'floatUp6', dur: '24s', delay: '35s', left: '28%' },
+        { l1: 'I\'m walking here!', l2: '여기 걷고 있단 말이야!', anim: 'floatUp7', dur: '22s', delay: '37s', left: '65%' },
+        { l1: 'Every passing minute is another chance', l2: 'Her geçen dakika başka bir şans', anim: 'floatUp8', dur: '32s', delay: '39s', left: '77%' },
+        { l1: 'The first rule is you do not talk', l2: 'La première règle est de ne pas en parler', anim: 'floatUp1', dur: '27s', delay: '41s', left: '2%' },
+        { l1: 'It\'s alive!', l2: 'انه حي!', anim: 'floatUp2', dur: '20s', delay: '43s', left: '90%' },
+        { l1: 'Here\'s Johnny!', l2: 'Hier ist Johnny!', anim: 'floatUp3', dur: '25s', delay: '45s', left: '16%' },
+        { l1: 'Bond, James Bond', l2: '叫我詹姆斯·邦德', anim: 'floatUp4', dur: '21s', delay: '47s', left: '52%' },
+        { l1: 'Life moves pretty fast', l2: 'La vie passe assez vite', anim: 'floatUp5', dur: '28s', delay: '49s', left: '33%' },
+        { l1: 'Snakes, why did it have to be snakes', l2: 'Змеи, зачем именно змеи', anim: 'floatUp6', dur: '30s', delay: '51s', left: '71%' },
+        { l1: 'Play it again, Sam', l2: 'Toccalo ancora, Sam', anim: 'floatUp7', dur: '26s', delay: '53s', left: '45%' },
+        { l1: 'As you wish', l2: 'جされしままに', anim: 'floatUp8', dur: '19s', delay: '55s', left: '86%' },
     ];
 
     const subtitleBgHTML = subtitlePairs.map((p, i) =>
@@ -764,39 +777,6 @@ export default function landingTemplate(manifest: Manifest): string {
 
     <script>
         ${script}
-
-        document.querySelectorAll('.subtitle-pair').forEach(pair => {
-            pair.addEventListener('click', (e) => {
-                e.stopPropagation()
-                if (pair.classList.contains('popped')) return
-                const rect = pair.getBoundingClientRect()
-                const centerX = rect.left + rect.width / 2
-                const centerY = rect.top + rect.height / 2
-                const colors = ['#ffffff', '#f1c40f', '#8A5AAB', '#ffffff', '#f1c40f']
-                for (let i = 0; i < 14; i++) {
-                    const p = document.createElement('div')
-                    p.className = 'particle'
-                    const angle = (Math.PI * 2 * i) / 14 + (Math.random() - 0.5) * 0.5
-                    const dist = 60 + Math.random() * 100
-                    const tx = Math.cos(angle) * dist + 'px'
-                    const ty = Math.sin(angle) * dist + 'px'
-                    const size = 3 + Math.random() * 5 + 'px'
-                    p.style.cssText =
-                        'left:' + centerX + 'px;' +
-                        'top:' + centerY + 'px;' +
-                        'width:' + size + ';' +
-                        'height:' + size + ';' +
-                        'background:' + colors[Math.floor(Math.random() * colors.length)] + ';' +
-                        '--tx:' + tx + ';' +
-                        '--ty:' + ty + ';' +
-                        'animation:particleBurst 0.7s cubic-bezier(0.16,1,0.3,1) forwards;'
-                    document.body.appendChild(p)
-                    setTimeout(() => { if (p.parentNode) p.parentNode.removeChild(p) }, 800)
-                }
-                pair.classList.add('popped')
-                setTimeout(() => { if (pair.parentNode) pair.parentNode.removeChild(pair) }, 300)
-            })
-        })
 
         copyLinkBtn.onclick = async () => {
             const url = copyLinkBtn.dataset.url
