@@ -272,29 +272,63 @@ body::after {
 
 .divider {
     height: 1px;
-    background: var(--border);
-    margin: 20px 0;
+    background: linear-gradient(to right, transparent, var(--border) 20%, var(--accent-glow) 50%, var(--border) 80%, transparent);
+    margin: 24px 0 20px;
 }
 
 .section-label {
     font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 1px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-    color: var(--text-dim);
-    margin-bottom: 14px;
+    color: var(--accent-light);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.section-label::before,
+.section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--border), transparent);
 }
 
 .form-group {
-    margin-bottom: 16px;
+    margin-bottom: 18px;
+    animation: formGroupIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.form-group:nth-child(1) { animation-delay: 0.05s; }
+.form-group:nth-child(2) { animation-delay: 0.1s; }
+.form-group:nth-child(3) { animation-delay: 0.15s; }
+
+@keyframes formGroupIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .form-group label {
-    display: block;
-    font-size: 13px;
-    font-weight: 500;
-    margin-bottom: 6px;
-    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    color: var(--accent-light);
+}
+
+.form-group label::before {
+    content: '';
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: linear-gradient(to bottom, var(--accent), var(--accent-light));
+    flex-shrink: 0;
 }
 
 .form-group select,
@@ -302,37 +336,58 @@ body::after {
 .form-group input[type="number"],
 .form-group input[type="password"] {
     width: 100%;
-    padding: 10px 14px;
+    padding: 12px 16px;
     font-size: 14px;
     font-family: inherit;
-    background: rgba(255, 255, 255, 0.05);
+    background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.08));
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--text);
     outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     appearance: none;
     -webkit-appearance: none;
+    letter-spacing: 0.2px;
+}
+
+.form-group select:hover {
+    border-color: rgba(255,255,255,0.2);
+    background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.11));
 }
 
 .form-group select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='rgba(255,255,255,0.5)' viewBox='0 0 16 16'%3E%3Cpath d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    background-size: 14px;
-    padding-right: 36px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='rgba(168,112,200,0.7)' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='rgba(255,255,255,0.12)' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat;
+    background-position: right 14px center, right 18px center;
+    background-size: 14px, 20px;
+    padding-right: 44px;
     cursor: pointer;
 }
 
 .form-group select:focus,
 .form-group input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-glow);
+    box-shadow: 0 0 0 4px var(--accent-glow), inset 0 0 0 1px var(--accent);
+    background: linear-gradient(135deg, rgba(168,112,200,0.08), rgba(255,255,255,0.05));
 }
 
 .form-group select option {
     background: #1a1030;
     color: var(--text);
+    padding: 10px 14px;
+    font-size: 13.5px;
+}
+
+.form-group select option:hover,
+.form-group select option:checked {
+    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    color: white;
+}
+
+.form-group select option:checked {
+    font-weight: 600;
+    background: linear-gradient(135deg, var(--accent), var(--accent-dark)) !important;
+    -webkit-text-fill-color: white;
 }
 
 .form-group input[type="checkbox"] {
