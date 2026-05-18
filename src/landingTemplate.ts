@@ -36,17 +36,94 @@ body {
     padding: 24px;
     background: linear-gradient(135deg, #0d0b1a 0%, #1a1030 40%, #0d0b1a 100%);
     position: relative;
-    overflow-x: hidden;
+    overflow: hidden;
 }
 
-.bg-layer {
+.subtitle-bg {
     position: fixed;
     inset: 0;
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    filter: blur(2px) brightness(0.3);
     z-index: -2;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.subtitle-pair {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    line-height: 1.3;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.8);
+    white-space: nowrap;
+    opacity: 0;
+    will-change: transform, opacity;
+}
+
+.subtitle-line-1 {
+    color: #ffffff;
+}
+
+.subtitle-line-2 {
+    color: #f1c40f;
+}
+
+@keyframes floatUp1 {
+    0% { transform: translateY(110vh) translateX(0) rotate(-1deg); opacity: 0; }
+    8% { opacity: 0.55; }
+    92% { opacity: 0.55; }
+    100% { transform: translateY(-20vh) translateX(40px) rotate(1deg); opacity: 0; }
+}
+
+@keyframes floatUp2 {
+    0% { transform: translateY(110vh) translateX(0) rotate(1.5deg); opacity: 0; }
+    10% { opacity: 0.45; }
+    90% { opacity: 0.45; }
+    100% { transform: translateY(-20vh) translateX(-30px) rotate(-1deg); opacity: 0; }
+}
+
+@keyframes floatUp3 {
+    0% { transform: translateY(110vh) translateX(0) rotate(-0.5deg); opacity: 0; }
+    6% { opacity: 0.5; }
+    94% { opacity: 0.5; }
+    100% { transform: translateY(-20vh) translateX(20px) rotate(0.5deg); opacity: 0; }
+}
+
+@keyframes floatUp4 {
+    0% { transform: translateY(110vh) translateX(0) rotate(2deg); opacity: 0; }
+    12% { opacity: 0.4; }
+    88% { opacity: 0.4; }
+    100% { transform: translateY(-20vh) translateX(-50px) rotate(-2deg); opacity: 0; }
+}
+
+@keyframes floatUp5 {
+    0% { transform: translateY(110vh) translateX(0) rotate(-1.5deg); opacity: 0; }
+    9% { opacity: 0.48; }
+    91% { opacity: 0.48; }
+    100% { transform: translateY(-20vh) translateX(35px) rotate(1.5deg); opacity: 0; }
+}
+
+@keyframes floatUp6 {
+    0% { transform: translateY(110vh) translateX(0) rotate(0.5deg); opacity: 0; }
+    7% { opacity: 0.52; }
+    93% { opacity: 0.52; }
+    100% { transform: translateY(-20vh) translateX(-20px) rotate(-0.5deg); opacity: 0; }
+}
+
+@keyframes floatUp7 {
+    0% { transform: translateY(110vh) translateX(0) rotate(-2deg); opacity: 0; }
+    11% { opacity: 0.38; }
+    89% { opacity: 0.38; }
+    100% { transform: translateY(-20vh) translateX(45px) rotate(2deg); opacity: 0; }
+}
+
+@keyframes floatUp8 {
+    0% { transform: translateY(110vh) translateX(0) rotate(1deg); opacity: 0; }
+    8% { opacity: 0.42; }
+    92% { opacity: 0.42; }
+    100% { transform: translateY(-20vh) translateX(-35px) rotate(-1deg); opacity: 0; }
 }
 
 body::after {
@@ -583,6 +660,28 @@ export default function landingTemplate(manifest: Manifest): string {
             .trim()
         : '';
 
+    const subtitlePairs = [
+        { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '5%' },
+        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '4s', left: '55%' },
+        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '8s', left: '25%' },
+        { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '12s', left: '70%' },
+        { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '2s', left: '40%' },
+        { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '6s', left: '10%' },
+        { l1: 'You talkin\' to me?', l2: '俺に話しかけてるのか？', anim: 'floatUp7', dur: '20s', delay: '10s', left: '60%' },
+        { l1: "There's no place like home", l2: 'Kein Ort wie zu Hause', anim: 'floatUp8', dur: '34s', delay: '14s', left: '35%' },
+        { l1: 'Just keep swimming', l2: '그냥 계속 헤엄쳐', anim: 'floatUp1', dur: '29s', delay: '16s', left: '75%' },
+        { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp2', dur: '25s', delay: '18s', left: '15%' },
+        { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp3', dur: '31s', delay: '20s', left: '50%' },
+        { l1: 'Here\'s looking at you, kid', l2: 'ดูที่เธอสิ เด็กน้อย', anim: 'floatUp4', dur: '23s', delay: '22s', left: '80%' },
+    ];
+
+    const subtitleBgHTML = subtitlePairs.map((p, i) =>
+        `<div class="subtitle-pair" style="left:${p.left};animation:${p.anim} ${p.dur} linear ${p.delay} infinite;">` +
+        `<span class="subtitle-line-1">${p.l1}</span>` +
+        `<span class="subtitle-line-2">${p.l2}</span>` +
+        `</div>`
+    ).join('\n');
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -594,7 +693,7 @@ export default function landingTemplate(manifest: Manifest): string {
     <style>${STYLESHEET}</style>
 </head>
 <body>
-    <div class="bg-layer" style="background-image: url(${background})"></div>
+    <div class="subtitle-bg">${subtitleBgHTML}</div>
     <div class="card">
         ${githubIcon}
         <span class="badge">v${manifest.version || '0.0.0'}</span>
