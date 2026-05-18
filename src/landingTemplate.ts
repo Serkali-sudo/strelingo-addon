@@ -42,9 +42,8 @@ body {
 .subtitle-bg {
     position: fixed;
     inset: 0;
-    z-index: -2;
+    z-index: 0;
     overflow: hidden;
-    pointer-events: none;
 }
 
 .subtitle-pair {
@@ -165,6 +164,7 @@ body::after {
 
 .card {
     position: relative;
+    z-index: 10;
     width: 100%;
     max-width: 480px;
     background: var(--surface);
@@ -688,49 +688,34 @@ export default function landingTemplate(manifest: Manifest): string {
         : '';
 
     const subtitlePairs = [
-        { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '5%' },
-        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '4s', left: '55%' },
-        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '8s', left: '25%' },
-        { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '12s', left: '70%' },
-        { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '2s', left: '40%' },
-        { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '6s', left: '10%' },
-        { l1: 'You talkin\' to me?', l2: '俺に話しかけてるのか？', anim: 'floatUp7', dur: '20s', delay: '10s', left: '60%' },
-        { l1: "There's no place like home", l2: 'Kein Ort wie zu Hause', anim: 'floatUp8', dur: '34s', delay: '14s', left: '35%' },
-        { l1: 'Just keep swimming', l2: '그냥 계속 헤엄쳐', anim: 'floatUp1', dur: '29s', delay: '16s', left: '75%' },
-        { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp2', dur: '25s', delay: '18s', left: '15%' },
-        { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp3', dur: '31s', delay: '20s', left: '50%' },
-        { l1: 'Here\'s looking at you, kid', l2: 'ดูที่เธอสิ เด็กน้อย', anim: 'floatUp4', dur: '23s', delay: '22s', left: '80%' },
-        { l1: 'My precious', l2: 'Tana yassen', anim: 'floatUp5', dur: '27s', delay: '1s', left: '12%' },
-        { l1: 'I love you 3000', l2: 'Seni 3000 kere seviyorum', anim: 'floatUp6', dur: '33s', delay: '3s', left: '45%' },
-        { l1: 'Wakanda forever', l2: 'וואקנדה לנצח', anim: 'floatUp7', dur: '21s', delay: '5s', left: '85%' },
-        { l1: 'Say hello to my little friend', l2: 'Powitaj mojego małego przyjaciela', anim: 'floatUp8', dur: '35s', delay: '7s', left: '20%' },
-        { l1: 'Live long and prosper', l2: 'За долг живот и просперитет', anim: 'floatUp1', dur: '24s', delay: '9s', left: '65%' },
-        { l1: 'You had me at hello', l2: 'मुझे तुमसे प्यार हो गया', anim: 'floatUp2', dur: '30s', delay: '11s', left: '8%' },
-        { l1: 'The cake is a lie', l2: 'Le gâteau est un mensonge', anim: 'floatUp3', dur: '26s', delay: '13s', left: '52%' },
-        { l1: 'I volunteer as tribute', l2: 'Ben gönüllüyüm', anim: 'floatUp4', dur: '22s', delay: '15s', left: '38%' },
-        { l1: 'Winter is coming', l2: 'Ο χειμώνας έρχεται', anim: 'floatUp5', dur: '36s', delay: '17s', left: '78%' },
-        { l1: 'We are Groot', l2: 'Nós somos Groot', anim: 'floatUp6', dur: '28s', delay: '19s', left: '3%' },
-        { l1: 'Houston, we have a problem', l2: 'ह्यूस्टन, हमारी एक समस्या है', anim: 'floatUp7', dur: '20s', delay: '21s', left: '48%' },
-        { l1: 'It\'s alive!', l2: 'Het leeft!', anim: 'floatUp8', dur: '32s', delay: '23s', left: '90%' },
-        { l1: 'No capes!', l2: 'بدون أردية!', anim: 'floatUp1', dur: '25s', delay: '0.5s', left: '30%' },
-        { l1: 'I am inevitable', l2: 'Eu sou inevitável', anim: 'floatUp2', dur: '29s', delay: '2.5s', left: '63%' },
-        { l1: 'I am the captain now', l2: 'Теперь я капитан', anim: 'floatUp3', dur: '23s', delay: '4.5s', left: '18%' },
-        { l1: 'Keep the change, ya filthy animal', l2: 'Bakiyeyi sen al, pis hayvan', anim: 'floatUp4', dur: '31s', delay: '6.5s', left: '72%' },
-        { l1: 'Show me the money!', l2: 'Pénzt akarok látni!', anim: 'floatUp5', dur: '27s', delay: '8.5s', left: '42%' },
-        { l1: 'I feel the need for speed', l2: 'Rýchlosť potrebujem', anim: 'floatUp6', dur: '21s', delay: '10.5s', left: '6%' },
-        { l1: 'You know nothing', l2: 'Ty nic nevíš', anim: 'floatUp7', dur: '35s', delay: '12.5s', left: '58%' },
-        { l1: 'I see you', l2: 'Látom téged', anim: 'floatUp8', dur: '19s', delay: '14.5s', left: '88%' },
-        { l1: 'How you doin\'?', l2: 'Come va?', anim: 'floatUp1', dur: '33s', delay: '16.5s', left: '28%' },
-        { l1: 'Rosebud', l2: 'Ρόδο', anim: 'floatUp2', dur: '26s', delay: '18.5s', left: '67%' },
-        { l1: 'With great power comes great responsibility', l2: 'Kekuatan besar datangnya dengan tanggung jawab besar', anim: 'floatUp3', dur: '37s', delay: '20.5s', left: '14%' },
-        { l1: 'There is no spoon', l2: 'Eve não existe colher', anim: 'floatUp4', dur: '22s', delay: '24.5s', left: '82%' },
-        { l1: 'Magic mirror on the wall', l2: 'Gương kia ngự ở trên tường', anim: 'floatUp5', dur: '30s', delay: '26.5s', left: '36%' },
-        { l1: 'Get to the chopper', l2: 'Τρέξε στο ελικόπτερο', anim: 'floatUp6', dur: '24s', delay: '28.5s', left: '74%' },
-        { l1: 'Bond, James Bond', l2: '邦德，詹姆斯·邦德', anim: 'floatUp7', dur: '28s', delay: '30.5s', left: '22%' },
-        { l1: 'If you build it, he will come', l2: 'Si lo construyes, él vendrá', anim: 'floatUp8', dur: '34s', delay: '32.5s', left: '56%' },
-        { l1: 'I am vengeance', l2: 'Jestem zemstą', anim: 'floatUp1', dur: '20s', delay: '34.5s', left: '92%' },
-        { l1: 'Expecto Patronum', l2: 'إكسبيكتو باترونوم', anim: 'floatUp2', dur: '32s', delay: '36.5s', left: '44%' },
-        { l1: 'Wilson!', l2: 'ويلسون!', anim: 'floatUp3', dur: '25s', delay: '38.5s', left: '8%' },
+        { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '2%' },
+        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '1.4s', left: '5.5%' },
+        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '2.8s', left: '9%' },
+        { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '4.2s', left: '12.5%' },
+        { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '5.6s', left: '16%' },
+        { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '7.0s', left: '19.5%' },
+        { l1: 'You talkin\' to me?', l2: '俺に話しかけてるのか？', anim: 'floatUp7', dur: '20s', delay: '8.4s', left: '23%' },
+        { l1: 'Just keep swimming', l2: '그냥 계속 헤엄쳐', anim: 'floatUp8', dur: '34s', delay: '9.8s', left: '26.5%' },
+        { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp1', dur: '29s', delay: '11.2s', left: '30%' },
+        { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp2', dur: '25s', delay: '12.6s', left: '33.5%' },
+        { l1: 'My precious', l2: 'Tana yassen', anim: 'floatUp3', dur: '31s', delay: '14.0s', left: '37%' },
+        { l1: 'I love you 3000', l2: 'Seni 3000 kere seviyorum', anim: 'floatUp4', dur: '23s', delay: '15.4s', left: '40.5%' },
+        { l1: 'Wakanda forever', l2: 'וואקנדה לנצח', anim: 'floatUp5', dur: '27s', delay: '16.8s', left: '44%' },
+        { l1: 'Live long and prosper', l2: 'За долг живот и просперитет', anim: 'floatUp6', dur: '33s', delay: '18.2s', left: '47.5%' },
+        { l1: 'No capes!', l2: 'بدون أردية!', anim: 'floatUp7', dur: '21s', delay: '19.6s', left: '51%' },
+        { l1: 'I am inevitable', l2: 'Eu sou inevitável', anim: 'floatUp8', dur: '35s', delay: '21.0s', left: '54.5%' },
+        { l1: 'I am the captain now', l2: 'Теперь я капитан', anim: 'floatUp1', dur: '19s', delay: '22.4s', left: '58%' },
+        { l1: 'Show me the money!', l2: 'Pénzt akarok látni!', anim: 'floatUp2', dur: '37s', delay: '23.8s', left: '61.5%' },
+        { l1: 'I feel the need for speed', l2: 'Rýchlosť potrebujem', anim: 'floatUp3', dur: '28s', delay: '25.2s', left: '65%' },
+        { l1: 'You know nothing', l2: 'Ty nic nevíš', anim: 'floatUp4', dur: '22s', delay: '26.6s', left: '68.5%' },
+        { l1: 'How you doin\'?', l2: 'Come va?', anim: 'floatUp5', dur: '32s', delay: '28.0s', left: '72%' },
+        { l1: 'Expecto Patronum', l2: 'إكسبيكتو باترونوم', anim: 'floatUp6', dur: '26s', delay: '29.4s', left: '75.5%' },
+        { l1: 'Wilson!', l2: 'ويلسون!', anim: 'floatUp7', dur: '24s', delay: '30.8s', left: '79%' },
+        { l1: "There's no place like home", l2: 'Kein Ort wie zu Hause', anim: 'floatUp8', dur: '30s', delay: '32.2s', left: '82.5%' },
+        { l1: 'Houston, we have a problem', l2: 'ह्यूस्टन, हमारी एक समस्या है', anim: 'floatUp1', dur: '20s', delay: '33.6s', left: '86%' },
+        { l1: 'It\'s alive!', l2: 'Het leeft!', anim: 'floatUp2', dur: '34s', delay: '35.0s', left: '89.5%' },
+        { l1: 'I am vengeance', l2: 'Jestem zemstą', anim: 'floatUp3', dur: '25s', delay: '36.4s', left: '93%' },
+        { l1: 'Magic mirror on the wall', l2: 'Gương kia ngự ở trên tường', anim: 'floatUp4', dur: '29s', delay: '37.8s', left: '96.5%' },
     ];
 
     const subtitleBgHTML = subtitlePairs.map((p, i) =>
