@@ -272,122 +272,218 @@ body::after {
 
 .divider {
     height: 1px;
-    background: linear-gradient(to right, transparent, var(--border) 20%, var(--accent-glow) 50%, var(--border) 80%, transparent);
-    margin: 24px 0 20px;
+    background: var(--border);
+    margin: 20px 0;
 }
 
 .section-label {
     font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1.5px;
+    font-weight: 600;
+    letter-spacing: 1px;
     text-transform: uppercase;
-    color: var(--accent-light);
-    margin-bottom: 16px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.section-label::before,
-.section-label::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: linear-gradient(to right, transparent, var(--border), transparent);
+    color: var(--text-dim);
+    margin-bottom: 14px;
 }
 
 .form-group {
-    margin-bottom: 18px;
-    animation: formGroupIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.form-group:nth-child(1) { animation-delay: 0.05s; }
-.form-group:nth-child(2) { animation-delay: 0.1s; }
-.form-group:nth-child(3) { animation-delay: 0.15s; }
-
-@keyframes formGroupIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    margin-bottom: 16px;
 }
 
 .form-group label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12.5px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    margin-bottom: 8px;
-    color: var(--accent-light);
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: var(--text);
 }
 
-.form-group label::before {
-    content: '';
-    width: 3px;
-    height: 14px;
-    border-radius: 2px;
-    background: linear-gradient(to bottom, var(--accent), var(--accent-light));
-    flex-shrink: 0;
-}
-
-.form-group select,
 .form-group input[type="text"],
 .form-group input[type="number"],
 .form-group input[type="password"] {
     width: 100%;
-    padding: 12px 16px;
+    padding: 10px 14px;
     font-size: 14px;
     font-family: inherit;
-    background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.08));
+    background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     color: var(--text);
     outline: none;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    appearance: none;
-    -webkit-appearance: none;
-    letter-spacing: 0.2px;
+    transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.form-group select:hover {
-    border-color: rgba(255,255,255,0.2);
-    background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.11));
-}
-
-.form-group select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='rgba(168,112,200,0.7)' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='rgba(255,255,255,0.12)' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat, no-repeat;
-    background-position: right 14px center, right 18px center;
-    background-size: 14px, 20px;
-    padding-right: 44px;
-    cursor: pointer;
-}
-
-.form-group select:focus,
 .form-group input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 4px var(--accent-glow), inset 0 0 0 1px var(--accent);
-    background: linear-gradient(135deg, rgba(168,112,200,0.08), rgba(255,255,255,0.05));
+    box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-.form-group select option {
-    background: #1a1030;
+.custom-select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.custom-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 11px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 500;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.03) 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     color: var(--text);
-    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    user-select: none;
+    backdrop-filter: blur(8px);
+}
+
+.custom-select-trigger:hover {
+    border-color: rgba(138, 90, 171, 0.5);
+    background: linear-gradient(135deg, rgba(138, 90, 171, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+    box-shadow: 0 4px 20px rgba(138, 90, 171, 0.15);
+}
+
+.custom-select-trigger.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow), 0 8px 32px rgba(138, 90, 171, 0.2);
+    background: linear-gradient(135deg, rgba(138, 90, 171, 0.15) 0%, rgba(255, 255, 255, 0.08) 100%);
+}
+
+.custom-select-trigger .select-value {
+    flex: 1;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.custom-select-trigger .select-arrow {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    color: var(--text-dim);
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+
+.custom-select-trigger.active .select-arrow {
+    transform: rotate(180deg);
+    color: var(--accent-light);
+}
+
+.custom-select-options {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: linear-gradient(180deg, rgba(30, 20, 50, 0.98) 0%, rgba(20, 15, 35, 0.98) 100%);
+    backdrop-filter: blur(24px) saturate(1.5);
+    -webkit-backdrop-filter: blur(24px) saturate(1.5);
+    border: 1px solid rgba(138, 90, 171, 0.3);
+    border-radius: var(--radius-sm);
+    padding: 6px;
+    z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px) scale(0.98);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 60px rgba(138, 90, 171, 0.15);
+    max-height: 240px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.custom-select-options::-webkit-scrollbar {
+    width: 6px;
+}
+
+.custom-select-options::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-select-options::-webkit-scrollbar-thumb {
+    background: rgba(138, 90, 171, 0.3);
+    border-radius: 3px;
+}
+
+.custom-select-options::-webkit-scrollbar-thumb:hover {
+    background: rgba(138, 90, 171, 0.5);
+}
+
+.custom-select-options.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+}
+
+.custom-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
     font-size: 13.5px;
+    font-family: inherit;
+    color: var(--text-dim);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    position: relative;
+    overflow: hidden;
 }
 
-.form-group select option:hover,
-.form-group select option:checked {
-    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-    color: white;
+.custom-option::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(138, 90, 171, 0.2) 0%, transparent 100%);
+    opacity: 0;
+    transition: opacity 0.15s ease;
 }
 
-.form-group select option:checked {
+.custom-option:hover {
+    color: var(--text);
+}
+
+.custom-option:hover::before {
+    opacity: 1;
+}
+
+.custom-option.selected {
+    color: var(--accent-light);
     font-weight: 600;
-    background: linear-gradient(135deg, var(--accent), var(--accent-dark)) !important;
-    -webkit-text-fill-color: white;
+    background: rgba(138, 90, 171, 0.12);
+}
+
+.custom-option.selected::after {
+    content: '';
+    position: absolute;
+    right: 12px;
+    width: 6px;
+    height: 6px;
+    background: var(--accent-light);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.custom-option .option-flag {
+    font-size: 16px;
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+.custom-option .option-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .form-group input[type="checkbox"] {
@@ -615,17 +711,26 @@ export default function landingTemplate(manifest: Manifest): string {
                 </div>`;
             } else if (elem.type === 'select') {
                 const defaultValue = elem.default || (elem.options || [])[0];
+                const selections = elem.options || [];
+                let optionsHTML = '';
+                selections.forEach(el => {
+                    const isSelected = el === defaultValue;
+                    optionsHTML += `<div class="custom-option${isSelected ? ' selected' : ''}" data-value="${el}"><span class="option-label">${el}</span></div>`;
+                });
                 options += `
                 <div class="form-group">
                     <label for="${key}">${elem.title}</label>
-                    <select id="${key}" name="${key}">
-                    `;
-                const selections = elem.options || [];
-                selections.forEach(el => {
-                    const isSelected = el === defaultValue ? ' selected' : '';
-                    options += `<option value="${el}"${isSelected}>${el}</option>`;
-                });
-                options += `</select></div>`;
+                    <div class="custom-select-wrapper" data-key="${key}">
+                        <input type="hidden" id="${key}" name="${key}" value="${defaultValue || ''}">
+                        <div class="custom-select-trigger" tabindex="0">
+                            <span class="select-value">${defaultValue || 'Select...'}</span>
+                            <span class="select-arrow"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                        </div>
+                        <div class="custom-select-options">
+                            ${optionsHTML}
+                        </div>
+                    </div>
+                </div>`;
             }
         });
         if (options.length) {
@@ -639,6 +744,58 @@ export default function landingTemplate(manifest: Manifest): string {
             </div>
             <div class="divider"></div>`;
             script += `
+            document.querySelectorAll('.custom-select-wrapper').forEach(wrapper => {
+                const trigger = wrapper.querySelector('.custom-select-trigger');
+                const optionsContainer = wrapper.querySelector('.custom-select-options');
+                const hiddenInput = wrapper.querySelector('input[type="hidden"]');
+                const valueDisplay = wrapper.querySelector('.select-value');
+                const optionElements = wrapper.querySelectorAll('.custom-option');
+
+                trigger.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    document.querySelectorAll('.custom-select-wrapper').forEach(w => {
+                        if (w !== wrapper) {
+                            w.querySelector('.custom-select-trigger').classList.remove('active');
+                            w.querySelector('.custom-select-options').classList.remove('open');
+                        }
+                    });
+                    trigger.classList.toggle('active');
+                    optionsContainer.classList.toggle('open');
+                });
+
+                trigger.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        trigger.click();
+                    } else if (e.key === 'Escape') {
+                        trigger.classList.remove('active');
+                        optionsContainer.classList.remove('open');
+                    }
+                });
+
+                optionElements.forEach(option => {
+                    option.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const value = option.dataset.value;
+                        const label = option.querySelector('.option-label').textContent;
+                        hiddenInput.value = value;
+                        valueDisplay.textContent = label;
+                        optionElements.forEach(o => o.classList.remove('selected'));
+                        option.classList.add('selected');
+                        trigger.classList.remove('active');
+                        optionsContainer.classList.remove('open');
+                        hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    });
+                });
+            });
+
+            document.addEventListener('click', () => {
+                document.querySelectorAll('.custom-select-wrapper').forEach(w => {
+                    w.querySelector('.custom-select-trigger').classList.remove('active');
+                    w.querySelector('.custom-select-options').classList.remove('open');
+                });
+            });
+
             const updateLink = () => {
                 const config = Object.fromEntries(new FormData(mainForm))
                 const configPath = '/' + encodeURIComponent(JSON.stringify(config))
@@ -650,8 +807,10 @@ export default function landingTemplate(manifest: Manifest): string {
 
                 const mainSel = document.getElementById('mainLang')
                 const transSel = document.getElementById('transLang')
-                const mainL = mainSel ? mainSel.options[mainSel.selectedIndex].text.split(' [')[0] : ''
-                const transL = transSel ? transSel.options[transSel.selectedIndex].text.split(' [')[0] : ''
+                const mainWrapper = mainSel ? mainSel.closest('.custom-select-wrapper') : null
+                const transWrapper = transSel ? transSel.closest('.custom-select-wrapper') : null
+                const mainL = mainWrapper ? mainWrapper.querySelector('.select-value').textContent.split(' [')[0] : ''
+                const transL = transWrapper ? transWrapper.querySelector('.select-value').textContent.split(' [')[0] : ''
                 const langLabel = document.getElementById('langLabel')
                 const langWarning = document.getElementById('langWarning')
                 const isSame = mainL === transL
@@ -683,8 +842,10 @@ export default function landingTemplate(manifest: Manifest): string {
             installLink.onclick = (e) => {
                 const mainSel = document.getElementById('mainLang')
                 const transSel = document.getElementById('transLang')
-                const mainL = mainSel ? mainSel.options[mainSel.selectedIndex].text.split(' [')[0] : ''
-                const transL = transSel ? transSel.options[transSel.selectedIndex].text.split(' [')[0] : ''
+                const mainWrapper = mainSel ? mainSel.closest('.custom-select-wrapper') : null
+                const transWrapper = transSel ? transSel.closest('.custom-select-wrapper') : null
+                const mainL = mainWrapper ? mainWrapper.querySelector('.select-value').textContent.split(' [')[0] : ''
+                const transL = transWrapper ? transWrapper.querySelector('.select-value').textContent.split(' [')[0] : ''
                 if (mainL === transL) {
                     e.preventDefault()
                     return false
@@ -694,8 +855,10 @@ export default function landingTemplate(manifest: Manifest): string {
             webInstallLink.addEventListener('click', (e) => {
                 const mainSel = document.getElementById('mainLang')
                 const transSel = document.getElementById('transLang')
-                const mainL = mainSel ? mainSel.options[mainSel.selectedIndex].text.split(' [')[0] : ''
-                const transL = transSel ? transSel.options[transSel.selectedIndex].text.split(' [')[0] : ''
+                const mainWrapper = mainSel ? mainSel.closest('.custom-select-wrapper') : null
+                const transWrapper = transSel ? transSel.closest('.custom-select-wrapper') : null
+                const mainL = mainWrapper ? mainWrapper.querySelector('.select-value').textContent.split(' [')[0] : ''
+                const transL = transWrapper ? transWrapper.querySelector('.select-value').textContent.split(' [')[0] : ''
                 if (mainL === transL) {
                     e.preventDefault()
                     return false
