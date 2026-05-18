@@ -110,13 +110,13 @@ The addon is now installed and configured with your chosen languages.
 Run encoding tests to verify subtitle decoding works correctly across 40+ languages:
 
 ```bash
-npm test                              # Run all tests
-node test/encoding.test.js --output   # Save decoded files to test/output/
-node test/download-inputs.js          # Re-download all test inputs
-node test/download-inputs.js tt123456 # Download specific movie
+npm test                                # Run all tests
+npx tsx test/encoding.test.ts --output  # Save decoded files to test/output/
+npx tsx test/download-inputs.ts         # Re-download all test inputs
+npx tsx test/download-inputs.ts tt123456 # Download specific movie
 ```
 
-Tests validate that decoded subtitles contain expected native-language strings (not just English). To add a new test movie, edit `test/movies.js`.
+Tests validate that decoded subtitles contain expected native-language strings (not just English). To add a new test movie, edit `test/movies.ts`.
 
 ## Technical Details
 
