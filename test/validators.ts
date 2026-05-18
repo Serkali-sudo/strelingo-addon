@@ -1,18 +1,40 @@
 /**
  * Shared validation utilities for subtitle testing.
- * Used by both encoding.test.js and e2e.test.js.
+ * Used by both encoding.test.ts and e2e.test.ts.
  */
 
-const { normalizeLanguageCode } = require('../encoding');
+import { normalizeLanguageCode } from '../src/encoding';
+import type { MovieConfig } from './movies';
+
+interface ValidationResult {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+}
+
+interface ExpectedStringsResult {
+    found: string[];
+    missing: string[];
+    success: boolean;
+}
+
+interface DualLanguageResult {
+    hasItalics: boolean;
+    italicCount: number;
+    dualCueCount: number;
+}
+
+interface SrtValidationResult {
+    valid: boolean;
+    errors: string[];
+    cueCount: number;
+}
 
 /**
  * Check for mojibake (misencoded text) using Latin Extended density.
  * High density (>10%) of chars in U+0080-U+00FF range suggests mojibake.
- *
- * @param {string} content - Decoded text content
- * @returns {{ hasMojibake: boolean, density: number, matches: number }}
  */
-function checkMojibake(content) {
+export function checkMojibake(content: string): { hasMojibake: boolean; density: number; matches: number } {
     const legacyMojibake = /[\u0080-\u00FF]/g;
     const matches = (content.match(legacyMojibake) || []).length;
     const density = content.length > 0 ? matches / content.length : 0;
@@ -24,23 +46,16 @@ function checkMojibake(content) {
 /**
  * Check for replacement characters (encoding failures).
  * The Unicode replacement character U+FFFD indicates failed decoding.
- *
- * @param {string} content - Decoded text content
- * @returns {boolean} True if replacement characters found
  */
-function hasReplacementChars(content) {
+export function hasReplacementChars(content: string): boolean {
     return content.includes('\uFFFD');
 }
 
 /**
  * Check if expected strings are found in content.
- * Uses expectedStrings from movies.js to verify proper decoding.
- *
- * @param {string} content - Decoded text content
- * @param {string[]} expectedStrings - Array of strings that should be found
- * @returns {{ found: string[], missing: string[], success: boolean }}
+ * Uses expectedStrings from movies.ts to verify proper decoding.
  */
-function checkExpectedStrings(content, expectedStrings) {
+export function checkExpectedStrings(content: string, expectedStrings: string[]): ExpectedStringsResult {
     if (!expectedStrings || expectedStrings.length === 0) {
         return { found: [], missing: [], success: true };
     }
@@ -55,18 +70,13 @@ function checkExpectedStrings(content, expectedStrings) {
 /**
  * Get expected strings for a language from movie config.
  * Handles both 2-letter and 3-letter language codes.
- *
- * @param {Object} movieConfig - Movie config object with expectedStrings
- * @param {string} langCode - Language code (2 or 3 letter)
- * @returns {string[]} Expected strings for the language, or empty array
  */
-function getExpectedStringsForLanguage(movieConfig, langCode) {
+export async function getExpectedStringsForLanguage(movieConfig: MovieConfig | undefined, langCode: string): Promise<string[]> {
     if (!movieConfig || !movieConfig.expectedStrings) {
         return [];
     }
 
-    // Convert to 2-letter code (normalizeLanguageCode handles both 2 and 3 letter codes)
-    const lang2 = normalizeLanguageCode(langCode) || langCode;
+    const lang2 = await normalizeLanguageCode(langCode) || langCode;
 
     return movieConfig.expectedStrings[lang2] || [];
 }
@@ -74,18 +84,11 @@ function getExpectedStringsForLanguage(movieConfig, langCode) {
 /**
  * Validate subtitle content encoding.
  * Combines all encoding validation checks.
- *
- * @param {string} content - Decoded subtitle content
- * @param {Object} options - Validation options
- * @param {Object} options.movieConfig - Movie config from movies.js (has expectedStrings)
- * @param {string} options.mainLang - Main language code (2 or 3 letter)
- * @param {string} options.transLang - Translation language code (2 or 3 letter)
- * @returns {{ valid: boolean, errors: string[], warnings: string[] }}
  */
-function validateEncoding(content, options = {}) {
+export async function validateEncoding(content: string, options: { movieConfig?: MovieConfig; mainLang?: string; transLang?: string } = {}): Promise<ValidationResult> {
     const { movieConfig, mainLang, transLang } = options;
-    const errors = [];
-    const warnings = [];
+    const errors: string[] = [];
+    const warnings: string[] = [];
 
     // 1. Check for replacement characters (hard error)
     if (hasReplacementChars(content)) {
@@ -100,7 +103,7 @@ function validateEncoding(content, options = {}) {
 
     // 3. Check expected strings for main language
     if (mainLang) {
-        const mainExpected = getExpectedStringsForLanguage(movieConfig, mainLang);
+        const mainExpected = await getExpectedStringsForLanguage(movieConfig, mainLang);
         if (mainExpected.length > 0) {
             const mainCheck = checkExpectedStrings(content, mainExpected);
             if (!mainCheck.success) {
@@ -111,7 +114,7 @@ function validateEncoding(content, options = {}) {
 
     // 4. Check expected strings for translation language
     if (transLang) {
-        const transExpected = getExpectedStringsForLanguage(movieConfig, transLang);
+        const transExpected = await getExpectedStringsForLanguage(movieConfig, transLang);
         if (transExpected.length > 0) {
             const transCheck = checkExpectedStrings(content, transExpected);
             if (!transCheck.success) {
@@ -131,17 +134,11 @@ function validateEncoding(content, options = {}) {
 /**
  * Check for dual-language format (main text + italic translation).
  * Strelingo adds translations in <i> tags.
- *
- * @param {string} content - Subtitle content
- * @returns {{ hasItalics: boolean, italicCount: number, dualCueCount: number }}
  */
-function checkDualLanguage(content) {
-    // Look for italic tags indicating translation
+export function checkDualLanguage(content: string): DualLanguageResult {
     const italicPattern = /<i>.*?<\/i>/gs;
     const italicMatches = content.match(italicPattern) || [];
 
-    // Count cues with both main and italic text
-    // Pattern: timestamp line followed by non-italic text, then italic text
     const dualCuePattern = /\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\r?\n[^<\r\n]+\r?\n<i>/g;
     const dualCues = content.match(dualCuePattern) || [];
 
@@ -158,18 +155,13 @@ function checkDualLanguage(content) {
  * - Sequential numeric IDs
  * - Valid timestamps (HH:MM:SS,mmm --> HH:MM:SS,mmm)
  * - Non-empty text content
- *
- * @param {string} content - SRT file content
- * @returns {{ valid: boolean, errors: string[], cueCount: number }}
  */
-function validateSrtFormat(content) {
-    const errors = [];
+export function validateSrtFormat(content: string): SrtValidationResult {
+    const errors: string[] = [];
     let cueCount = 0;
 
-    // SRT cue pattern: number, timestamp line, text (one or more lines), blank line
     const timestampPattern = /^\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}/;
 
-    // Split into blocks (separated by blank lines)
     const blocks = content.trim().split(/\n\s*\n/);
 
     for (let i = 0; i < blocks.length; i++) {
@@ -178,27 +170,23 @@ function validateSrtFormat(content) {
 
         const lines = block.split(/\r?\n/);
         if (lines.length < 3) {
-            // Allow 2-line blocks (ID + timestamp + text on same conceptual unit)
             if (lines.length === 2 && timestampPattern.test(lines[1])) {
                 errors.push(`Cue ${i + 1}: Missing text content`);
             }
             continue;
         }
 
-        // Line 1: Should be a number
         const id = parseInt(lines[0], 10);
         if (isNaN(id)) {
             errors.push(`Cue ${i + 1}: Invalid ID "${lines[0].slice(0, 20)}"`);
             continue;
         }
 
-        // Line 2: Should be timestamp
         if (!timestampPattern.test(lines[1])) {
             errors.push(`Cue ${i + 1}: Invalid timestamp "${lines[1].slice(0, 50)}"`);
             continue;
         }
 
-        // Lines 3+: Should have text
         const text = lines.slice(2).join('\n').trim();
         if (!text) {
             errors.push(`Cue ${i + 1}: Empty text content`);
@@ -208,7 +196,6 @@ function validateSrtFormat(content) {
         cueCount++;
     }
 
-    // Basic sanity checks
     if (cueCount === 0) {
         errors.push('No valid SRT cues found');
     } else if (cueCount < 10) {
@@ -217,17 +204,7 @@ function validateSrtFormat(content) {
 
     return {
         valid: errors.length === 0,
-        errors: errors.slice(0, 5), // Limit to first 5 errors
+        errors: errors.slice(0, 5),
         cueCount
     };
 }
-
-module.exports = {
-    checkMojibake,
-    hasReplacementChars,
-    checkExpectedStrings,
-    getExpectedStringsForLanguage,
-    validateEncoding,
-    checkDualLanguage,
-    validateSrtFormat,
-};

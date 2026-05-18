@@ -4,48 +4,63 @@
  *
  * IMPORTANT: This script should ONLY be used once you have confidently confirmed that
  * the input file IS ACTUALLY CORRUPT. Running this will exclude the specified files
- * from the tests when they fail. Do not mark files as bad without thorough investigation 
- * proving the input file itself is corrupt or unfixable (and is not a bug in our encoding 
+ * from the tests when they fail. Do not mark files as bad without thorough investigation
+ * proving the input file itself is corrupt or unfixable (and is not a bug in our encoding
  * detection).
  *
  * Usage:
- *   node test/mark-bad-input.js <movie-id> <filename> "<reason>"
+ *   npx tsx test/mark-bad-input.ts <movie-id> <filename> "<reason>"
  *
  * Example:
- *   node test/mark-bad-input.js tt0133093 bg_3_subf2m.raw "File has mixed Arabic/Latin encoding corruption that cannot be decoded"
+ *   npx tsx test/mark-bad-input.ts tt0133093 bg_3_subf2m.raw "File has mixed Arabic/Latin encoding corruption that cannot be decoded"
  */
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const KNOWN_BAD_FILE = path.join(__dirname, 'known-bad-inputs.json');
 const INPUTS_DIR = path.join(__dirname, 'inputs');
 
-function hashFile(filepath) {
+interface KnownBadEntry {
+    reason: string;
+    markedAt: string;
+    originalFile: string;
+}
+
+interface KnownBadData {
+    _warning?: string;
+    hashes: Record<string, KnownBadEntry>;
+}
+
+function hashFile(filepath: string): string {
     const buffer = fs.readFileSync(filepath);
     return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
-function loadKnownBad() {
+function loadKnownBad(): KnownBadData {
     if (fs.existsSync(KNOWN_BAD_FILE)) {
         return JSON.parse(fs.readFileSync(KNOWN_BAD_FILE, 'utf8'));
     }
     return {
-        _warning: "Do not manually edit this file, use mark-bad-input.js instead. These are genuinely corrupt inputs that have been properly investigated, encoding bugs MUST NOT be listed here.",
+        _warning: "Do not manually edit this file, use mark-bad-input.ts instead. These are genuinely corrupt inputs that have been properly investigated, encoding bugs MUST NOT be listed here.",
         hashes: {}
     };
 }
 
-function saveKnownBad(data) {
+function saveKnownBad(data: KnownBadData): void {
     fs.writeFileSync(KNOWN_BAD_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
-function main() {
+function main(): void {
     const args = process.argv.slice(2);
 
     if (args.length < 3) {
-        console.log('Usage: node test/mark-bad-input.js <movie-id> <filename> "<reason>"');
+        console.log('Usage: npx tsx test/mark-bad-input.ts <movie-id> <filename> "<reason>"');
         console.log('');
         console.log('IMPORTANT: Only use this with explicit user approval!');
         console.log('This is for genuinely corrupt input files, not encoding detection bugs.');
@@ -65,7 +80,6 @@ function main() {
 
     const data = loadKnownBad();
 
-    // Check if this hash is already marked
     if (data.hashes[hash]) {
         console.log(`This file is already marked as known bad:`);
         console.log(`  Hash: ${hash.slice(0, 16)}...`);

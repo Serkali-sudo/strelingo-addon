@@ -1,34 +1,35 @@
 /**
  * Ensures test input files exist by downloading them if missing.
- * This module can be required by any test that needs input files.
+ * This module can be imported by any test that needs input files.
  *
  * Usage:
- *   const ensureInputs = require('./ensure-inputs');
+ *   import ensureInputs from './ensure-inputs';
  *   await ensureInputs();  // Downloads if missing
  */
 
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
-const movies = require('./movies');
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import movies from './movies';
+import type { MovieConfig } from './movies';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const INPUTS_DIR = path.join(__dirname, 'inputs');
 
 /**
  * Checks if all required input files exist for a given movie.
- * @param {Object} movie - Movie configuration from movies.js
- * @returns {boolean} True if all inputs exist
  */
-function hasInputs(movie) {
+function hasInputs(movie: MovieConfig): boolean {
     const movieDir = path.join(INPUTS_DIR, movie.id);
     const manifestPath = path.join(movieDir, 'manifest.json');
 
-    // Check if manifest exists (indicates the movie was downloaded)
     if (!fs.existsSync(manifestPath)) {
         return false;
     }
 
-    // Check if manifest has subtitles listed
     try {
         const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
         return manifest.subtitles && manifest.subtitles.length > 0;
@@ -39,21 +40,18 @@ function hasInputs(movie) {
 
 /**
  * Downloads input files for a specific movie.
- * @param {Object} movie - Movie configuration from movies.js
- * @returns {Promise<void>}
  */
-async function downloadMovie(movie) {
+async function downloadMovie(movie: MovieConfig): Promise<void> {
     console.log(`Downloading inputs for: ${movie.name} (${movie.id})`);
 
-    const downloadScript = path.join(__dirname, 'download-inputs.js');
+    const downloadScript = path.join(__dirname, 'download-inputs.ts');
 
     try {
-        // Run download-inputs.js for this specific movie
-        execSync(`node "${downloadScript}" ${movie.id}`, {
+        execSync(`npx tsx "${downloadScript}" ${movie.id}`, {
             stdio: 'inherit',
             cwd: path.dirname(__dirname)
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error(`Failed to download inputs for ${movie.id}: ${error.message}`);
         throw error;
     }
@@ -61,12 +59,10 @@ async function downloadMovie(movie) {
 
 /**
  * Ensures all test inputs exist, downloading any that are missing.
- * @returns {Promise<void>}
  */
-async function ensureInputs() {
+export default async function ensureInputs(): Promise<void> {
     console.log('Checking test input files...');
 
-    // Create inputs directory if it doesn't exist
     if (!fs.existsSync(INPUTS_DIR)) {
         fs.mkdirSync(INPUTS_DIR, { recursive: true });
     }
@@ -82,12 +78,9 @@ async function ensureInputs() {
     missingMovies.forEach(m => console.log(`  - ${m.name} (${m.id})`));
     console.log('\nDownloading missing inputs...\n');
 
-    // Download missing movies sequentially
     for (const movie of missingMovies) {
         await downloadMovie(movie);
     }
 
     console.log('\n✓ All test inputs ready\n');
 }
-
-module.exports = ensureInputs;

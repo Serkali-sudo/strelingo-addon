@@ -7,11 +7,19 @@
  * Strings should include both character names AND native language words.
  */
 
-module.exports = [
+interface MovieConfig {
+    id: string;
+    name: string;
+    type?: string;
+    season?: number;
+    episode?: number;
+    expectedStrings?: Record<string, string[]>;
+}
+
+const movies: MovieConfig[] = [
     {
         id: 'tt0133093',
         name: 'The Matrix',
-        // Expected strings per language (at least one must be found to pass)
         expectedStrings: {
             'en': ['Matrix', 'Neo', 'Trinity', 'Morpheus'],
             'es': ['Matrix', 'está', 'tiempo'],
@@ -154,7 +162,6 @@ module.exports = [
         id: 'tt0944947',
         name: 'Game of Thrones',
         type: 'series',
-        // Default test episode: S1E1 "Winter Is Coming"
         season: 1,
         episode: 1,
         expectedStrings: {
@@ -189,8 +196,6 @@ module.exports = [
             'hi': ['स्टार्क', 'सर्दी', 'आ', 'रही', 'राजा'],
         }
     },
-    // === MISLABELED TEST CASES ===
-    // These movies have known mislabeled subtitles to verify MISLABELED detection works
     {
         id: 'tt0088323',
         name: 'The NeverEnding Story',
@@ -199,7 +204,7 @@ module.exports = [
             'es': ['Atreyu', 'Bastian', 'está', 'qué'],
             'pt': ['Bastian', 'Atreyu', 'você', 'não'],
             'fr': ['Atreyu', 'Bastian', 'vous', 'pas'],
-            'hu': ['Bastian', 'Semmi', 'Atreju'],  // Should fail - file is mislabeled
+            'hu': ['Bastian', 'Semmi', 'Atreju'],
         }
     },
     {
@@ -210,11 +215,9 @@ module.exports = [
             'ru': ['Джоб', 'это', 'что', 'мой'],
             'es': ['Jobe', 'esto', 'qué', 'para'],
             'el': ['Τρέις', 'είναι', 'για', 'αυτό'],
-            'pl': ['Jobe', 'jest', 'nie'],  // Should fail - file is mislabeled
+            'pl': ['Jobe', 'jest', 'nie'],
         }
     },
-    // === ORIGINAL THAI ENCODING TEST CASES ===
-    // These were the original movies that triggered the Thai encoding fix project
     {
         id: 'tt0086190',
         name: 'Star Wars: Episode VI - Return of the Jedi',
@@ -223,7 +226,7 @@ module.exports = [
             'zh': ['維達', '路克', '絕地', '天行者'],
             'ru': ['Люк', 'Соло', 'Скайуокер', 'галактик'],
             'ja': ['ルーク', 'ソロ', 'ジェダイ', 'スカイウォーカー'],
-            'th': ['ลุค', 'เวเดอร์', 'เจได'],  // Thai script validation
+            'th': ['ลุค', 'เวเดอร์', 'เจได'],
         }
     },
     {
@@ -234,7 +237,10 @@ module.exports = [
             'es': ['Lenny', 'esto', 'qué', 'para'],
             'pt': ['Lenny', 'Faith', 'isso', 'você'],
             'fr': ['Lenny', 'Faith', 'vous', 'pas'],
-            'th': ['เลนนี่', 'เมซี่'],  // Thai script validation
+            'th': ['เลนนี่', 'เมซี่'],
         }
     }
 ];
+
+export default movies;
+export type { MovieConfig };

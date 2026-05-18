@@ -4,59 +4,68 @@
  * Saves raw bytes to preserve encoding issues for testing.
  *
  * Usage:
- *   node test/download-inputs.js           # Download all movies in movies.js
- *   node test/download-inputs.js tt1375666 # Download specific movie by IMDB ID
+ *   npx tsx test/download-inputs.ts           # Download all movies in movies.ts
+ *   npx tsx test/download-inputs.ts tt1375666 # Download specific movie by IMDB ID
  */
 
-const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const movies = require('./movies');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import movies from './movies';
+import type { MovieConfig } from './movies';
 
-// Create axios instance with timing interceptors
-const http = axios.create();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Add timing data to each request
-http.interceptors.request.use((config) => {
-    config.metadata = { startTime: Date.now() };
-    return config;
-});
+const INPUTS_DIR = path.join(__dirname, 'inputs');
+const MAX_PER_LANG = 3;
+const DOWNLOAD_TIMEOUT = 10000;
+const MAX_RETRIES = 2;
 
-http.interceptors.response.use(
-    (response) => {
-        const endTime = Date.now();
-        response.timing = {
-            totalMs: endTime - response.config.metadata.startTime
-        };
-        return response;
-    },
-    (error) => {
-        if (error.config?.metadata?.startTime) {
-            error.timing = {
-                totalMs: Date.now() - error.config.metadata.startTime
-            };
-        }
-        return Promise.reject(error);
-    }
-);
+const OPENSUBTITLES_API = 'https://opensubtitles-v3.strem.io/subtitles';
 
-function formatMs(ms) {
+const targetId = process.argv[2];
+
+function formatMs(ms: number): string {
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(2)}s`;
 }
 
-const INPUTS_DIR = path.join(__dirname, 'inputs');
-const MAX_PER_LANG = 3;  // Max subtitles per language
-const DOWNLOAD_TIMEOUT = 10000;  // 10s timeout per download
-const MAX_RETRIES = 2;  // Max retries per subtitle
+interface SubtitleApiObject {
+    id: string;
+    url: string;
+    lang: string;
+    downloads?: number;
+}
 
-// OpenSubtitles v3 API (same as production)
-const OPENSUBTITLES_API = 'https://opensubtitles-v3.strem.io/subtitles';
+interface DownloadQueueItem {
+    lang: string;
+    safeLang: string;
+    filename: string;
+    filepath: string;
+    url: string;
+    source: string;
+    apiObject: SubtitleApiObject;
+    retries: number;
+}
 
-// Parse command line for specific movie ID
-const targetId = process.argv[2];
+interface Manifest {
+    imdbId: string;
+    name: string;
+    subtitles: ManifestSubtitle[];
+}
 
-async function downloadMovie(movie) {
+interface ManifestSubtitle {
+    filename: string;
+    language: string;
+    source: string;
+    size: number;
+    downloadedAt: string;
+    url: string;
+    downloadTimeMs: number;
+}
+
+async function downloadMovie(movie: MovieConfig): Promise<void> {
     console.log(`\n${'='.repeat(60)}`);
     console.log(`Downloading: ${movie.name} (${movie.id})`);
     console.log('='.repeat(60));
@@ -66,29 +75,29 @@ async function downloadMovie(movie) {
         fs.mkdirSync(movieDir, { recursive: true });
     }
 
-    // Build API URL (same format as production)
-    // For movies: add :0 dummy hash to trigger full OpenSubtitles results
-    // For series: season:episode already has colons, which triggers full results
     const type = movie.type === 'series' ? 'series' : 'movie';
-    let searchUrl;
+    let searchUrl: string;
 
     if (type === 'series' && movie.season && movie.episode) {
         searchUrl = `${OPENSUBTITLES_API}/${type}/${movie.id}:${movie.season}:${movie.episode}.json`;
     } else {
-        // Add :0 dummy hash for movies to get full results
         searchUrl = `${OPENSUBTITLES_API}/${type}/${movie.id}:0.json`;
     }
 
     console.log(`\nFetching subtitles from: ${searchUrl}`);
 
-    let allSubs;
+    let allSubs: SubtitleApiObject[];
     try {
-        const response = await http.get(searchUrl, { timeout: 120000 });
-        allSubs = response.data?.subtitles || [];
-        console.log(`Found ${allSubs.length} total subtitles (${formatMs(response.timing.totalMs)})`);
-    } catch (err) {
-        const timing = err.timing ? ` after ${formatMs(err.timing.totalMs)}` : '';
-        console.error(`Search failed${timing}: ${err.message}`);
+        const startTime = Date.now();
+        const response = await fetch(searchUrl, {
+            signal: AbortSignal.timeout(120000)
+        });
+        if (!response.ok) throw new Error(`API responded with ${response.status}`);
+        const data = await response.json() as { subtitles?: SubtitleApiObject[] };
+        allSubs = data.subtitles || [];
+        console.log(`Found ${allSubs.length} total subtitles (${formatMs(Date.now() - startTime)})`);
+    } catch (err: any) {
+        console.error(`Search failed: ${err.message}`);
         return;
     }
 
@@ -97,8 +106,7 @@ async function downloadMovie(movie) {
         return;
     }
 
-    // Group by language (API uses 3-letter 'lang' field)
-    const byLang = {};
+    const byLang: Record<string, SubtitleApiObject[]> = {};
     for (const sub of allSubs) {
         const lang = sub.lang || 'unknown';
         if (!byLang[lang]) byLang[lang] = [];
@@ -107,14 +115,13 @@ async function downloadMovie(movie) {
 
     console.log(`Languages available: ${Object.keys(byLang).join(', ')}\n`);
 
-    const manifest = {
+    const manifest: Manifest = {
         imdbId: movie.id,
         name: movie.name,
         subtitles: []
     };
 
-    // Build download queue with all subtitles to download
-    const downloadQueue = [];
+    const downloadQueue: DownloadQueueItem[] = [];
     for (const [lang, subs] of Object.entries(byLang)) {
         const toDownload = subs.slice(0, MAX_PER_LANG);
         for (let i = 0; i < toDownload.length; i++) {
@@ -128,7 +135,7 @@ async function downloadMovie(movie) {
                 filepath: path.join(movieDir, filename),
                 url: subInfo.url,
                 source: 'opensubtitles',
-                apiObject: subInfo,  // Full API response object for this subtitle
+                apiObject: subInfo,
                 retries: 0
             });
         }
@@ -136,20 +143,22 @@ async function downloadMovie(movie) {
 
     console.log(`Downloading ${downloadQueue.length} subtitles (limiting results to a max of ${MAX_PER_LANG} subtitles per language)...\n`);
 
-    // Process queue with retry logic
     let successCount = 0;
     let failCount = 0;
 
     while (downloadQueue.length > 0) {
-        const item = downloadQueue.shift();
+        const item = downloadQueue.shift()!;
 
         try {
-            const response = await http.get(item.url, {
-                responseType: 'arraybuffer',
-                timeout: DOWNLOAD_TIMEOUT
+            const startTime = Date.now();
+            const response = await fetch(item.url, {
+                signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT)
             });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const elapsed = Date.now() - startTime;
 
-            const buffer = Buffer.from(response.data);
             fs.writeFileSync(item.filepath, buffer);
 
             manifest.subtitles.push({
@@ -159,27 +168,22 @@ async function downloadMovie(movie) {
                 size: buffer.length,
                 downloadedAt: new Date().toISOString(),
                 url: item.url,
-                responseHeaders: response.headers,
-                apiObject: item.apiObject,
-                downloadTimeMs: response.timing.totalMs
+                downloadTimeMs: elapsed
             });
 
-            console.log(`  ✓ ${item.lang}: ${item.filename} (${buffer.length} bytes, ${formatMs(response.timing.totalMs)})`);
+            console.log(`  ✓ ${item.lang}: ${item.filename} (${buffer.length} bytes, ${formatMs(elapsed)})`);
             successCount++;
-        } catch (err) {
-            const timing = err.timing ? ` in ${formatMs(err.timing.totalMs)}` : '';
+        } catch (err: any) {
             if (item.retries < MAX_RETRIES) {
                 item.retries++;
-                console.log(`  ⟳ ${item.lang}: ${item.filename} - ${err.message}${timing} (retry ${item.retries}/${MAX_RETRIES})`);
-                // Add back to end of queue for retry
+                console.log(`  ⟳ ${item.lang}: ${item.filename} - ${err.message} (retry ${item.retries}/${MAX_RETRIES})`);
                 downloadQueue.push(item);
             } else {
-                console.log(`  ✗ ${item.lang}: ${item.filename} - ${err.message}${timing} (gave up after ${MAX_RETRIES} retries)`);
+                console.log(`  ✗ ${item.lang}: ${item.filename} - ${err.message} (gave up after ${MAX_RETRIES} retries)`);
                 failCount++;
             }
         }
 
-        // Small delay to be nice to the server
         await new Promise(r => setTimeout(r, 100));
     }
 
@@ -191,18 +195,16 @@ async function downloadMovie(movie) {
     }
 }
 
-async function main() {
+async function main(): Promise<void> {
     console.log('Subtitle Input Downloader\n');
 
-    // Filter movies if specific ID provided
     let moviesToDownload = targetId
         ? movies.filter(m => m.id === targetId)
         : movies;
 
-    // Allow downloading any movie by ID even if not in movies.js
     if (moviesToDownload.length === 0 && targetId) {
-        console.log(`Movie ${targetId} not in movies.js, downloading anyway...`);
-        moviesToDownload = [{ id: targetId, name: targetId, expectedStrings: {} }];
+        console.log(`Movie ${targetId} not in movies.ts, downloading anyway...`);
+        moviesToDownload = [{ id: targetId, name: targetId }];
     }
 
     for (const movie of moviesToDownload) {

@@ -11,9 +11,9 @@
     "build": "tsc",
     "deploy": "wrangler deploy src/index.ts",
     "deploy:vercel": "vercel --prod",
-    "test": "node test/encoding.test.js && node test/e2e.test.js",
-    "test:encoding": "node test/encoding.test.js",
-    "test:e2e": "node test/e2e.test.js"
+    "test": "npx tsx test/encoding.test.ts && npx tsx test/e2e.test.ts",
+    "test:encoding": "npx tsx test/encoding.test.ts",
+    "test:e2e": "npx tsx test/e2e.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.2",

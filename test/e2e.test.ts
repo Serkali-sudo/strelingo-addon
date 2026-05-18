@@ -2,67 +2,96 @@
  * End-to-end tests for Strelingo addon server.
  *
  * Usage:
- *   node test/e2e.test.js              # Run all e2e tests
- *   node test/e2e.test.js --keep       # Keep server running after tests
- *   node test/e2e.test.js --skip-clear # Don't clear subtitle cache
+ *   npx tsx test/e2e.test.ts              # Run all e2e tests
+ *   npx tsx test/e2e.test.ts --keep       # Keep server running after tests
+ *   npx tsx test/e2e.test.ts --skip-clear # Don't clear subtitle cache
  */
 
-const fs = require('fs');
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { decodeSubtitleBuffer } from '../src/encoding';
+import movies from './movies';
+import type { MovieConfig } from './movies';
+import {
+    validateEncoding,
+    checkDualLanguage,
+    validateSrtFormat,
+    getExpectedStringsForLanguage,
+    checkExpectedStrings
+} from './validators';
 
-const axios = require('axios');
-const { execSync } = require('child_process');
-const { decodeSubtitleBuffer } = require('../encoding');
-const movies = require('./movies');
-const { validateEncoding, checkDualLanguage, validateSrtFormat, getExpectedStringsForLanguage, checkExpectedStrings } = require('./validators');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load .env file manually (dotenv not needed)
+function loadEnvFile(envPath: string): void {
+    if (!fs.existsSync(envPath)) return;
+    const content = fs.readFileSync(envPath, 'utf8');
+    for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        let value = trimmed.slice(eqIdx + 1).trim();
+        // Remove surrounding quotes
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+        }
+        if (!(key in process.env)) {
+            process.env[key] = value;
+        }
+    }
+}
+
+loadEnvFile(path.join(__dirname, '..', '.env'));
 
 // === Configuration ===
 const PROJECT_DIR = path.resolve(__dirname, '..');
 const BASE_URL = process.env.EXTERNAL_URL || `http://localhost:${process.env.PORT || 7000}`;
-const SCRIPTS_DIR = __dirname; // Scripts are in test/ directory
+const SCRIPTS_DIR = __dirname;
 const SERVER_LOG = path.join(PROJECT_DIR, 'server.log');
 const SUBTITLES_DIR = process.env.LOCAL_STORAGE_DIR
     ? path.resolve(PROJECT_DIR, process.env.LOCAL_STORAGE_DIR)
     : null;
 
-// Test data - use movies from movies.js dynamically
-// Language pairs designed to test different character set combinations for merge validation:
-// - Latin: ASCII + accented chars (eng, spa, por, fra) - 1 byte ASCII, 2-byte accents in UTF-8
-// - 2-byte scripts: Cyrillic (rus), Greek (ell), Hebrew (heb), Arabic (ara) - 2 bytes in UTF-8
-// - 3-byte scripts: CJK (zht, jpn, kor), Thai (tha) - 3 bytes in UTF-8
-const LANGUAGE_PAIRS = [
-    // 1. Latin + Latin: English + Spanish (both ASCII with accented chars)
+interface LanguagePair {
+    main: string;
+    trans: string;
+    name: string;
+}
+
+const LANGUAGE_PAIRS: LanguagePair[] = [
     { main: 'eng', trans: 'spa', name: 'English + Spanish (Latin+Latin)' },
-
-    // 2. Non-English Latin + Non-English Latin: Portuguese + French
     { main: 'por', trans: 'fre', name: 'Portuguese + French (Latin+Latin)' },
-
-    // 3. English + 2-byte: English + Russian (Cyrillic)
     { main: 'eng', trans: 'rus', name: 'English + Russian (Latin+Cyrillic)' },
-
-    // 4. Non-English Latin + 2-byte: Spanish + Greek
     { main: 'spa', trans: 'ell', name: 'Spanish + Greek (Latin+Greek)' },
-
-    // 5. English + 3-byte: English + Chinese (Traditional)
     { main: 'eng', trans: 'zht', name: 'English + Chinese (Latin+CJK)' },
-
-    // 6. 2-byte + 3-byte: Russian + Japanese
     { main: 'rus', trans: 'jpn', name: 'Russian + Japanese (Cyrillic+CJK)' },
 ];
+
 const TEST_MOVIES = movies.filter(m => m.type !== 'series');
 const TEST_SERIES_LIST = movies.filter(m => m.type === 'series');
 
-// State
+interface UserManifest {
+    pair: LanguagePair;
+    configUrl: string;
+}
+
+interface TestResults {
+    passed: number;
+    failed: number;
+    errors: Array<{ test: string; details: string }>;
+}
+
 let serverStartedByUs = false;
-let manifest = null;
-let results = { passed: 0, failed: 0, errors: [] };
+let manifest: any = null;
+const results: TestResults = { passed: 0, failed: 0, errors: [] };
 let lastLogPosition = 0;
 
-/**
- * Get server log position (for capturing logs after a request)
- */
-function markLogPosition() {
+function markLogPosition(): void {
     try {
         const stats = fs.statSync(SERVER_LOG);
         lastLogPosition = stats.size;
@@ -71,24 +100,18 @@ function markLogPosition() {
     }
 }
 
-/**
- * Get server logs since last mark, filtered by content ID
- * @param {string} contentId - IMDB ID to filter logs for
- * @returns {string} Relevant log lines
- */
-function getRecentLogs(contentId) {
+function getRecentLogs(contentId: string): string {
     try {
         const fd = fs.openSync(SERVER_LOG, 'r');
         const stats = fs.fstatSync(fd);
-        const bytesToRead = Math.min(stats.size - lastLogPosition, 10000); // Max 10KB
-        if (bytesToRead <= 0) return '';
+        const bytesToRead = Math.min(stats.size - lastLogPosition, 10000);
+        if (bytesToRead <= 0) { fs.closeSync(fd); return ''; }
 
         const buffer = Buffer.alloc(bytesToRead);
         fs.readSync(fd, buffer, 0, bytesToRead, lastLogPosition);
         fs.closeSync(fd);
 
         const logs = buffer.toString('utf8');
-        // Filter for lines mentioning this content ID
         const lines = logs.split('\n').filter(line =>
             line.includes(contentId) ||
             line.includes('No subtitles found') ||
@@ -96,66 +119,52 @@ function getRecentLogs(contentId) {
             line.includes('403') ||
             line.includes('fallback')
         );
-        return lines.slice(0, 10).join('\n'); // Max 10 relevant lines
+        return lines.slice(0, 10).join('\n');
     } catch {
         return '';
     }
 }
 
-// === Helpers ===
-
-function log(msg) { console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`); }
-
-function pass(name) { console.log(`  ✓ ${name}`); results.passed++; }
-
-function fail(name, details = '') {
+function log(msg: string): void { console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`); }
+function pass(name: string): void { console.log(`  ✓ ${name}`); results.passed++; }
+function fail(name: string, details = ''): void {
     console.log(`  ✗ ${name}${details ? ': ' + details : ''}`);
     results.failed++;
     results.errors.push({ test: name, details });
 }
-
-function test(name, condition, details = '') {
+function test(name: string, condition: boolean, details = ''): void {
     condition ? pass(name) : fail(name, details);
 }
 
-function runScript(name) {
+function runScript(name: string): { ok: boolean; out?: string; err?: string } {
     try {
         return { ok: true, out: execSync(`bash "${path.join(SCRIPTS_DIR, name)}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }) };
-    } catch (e) {
+    } catch (e: any) {
         return { ok: false, err: e.stderr || e.message };
     }
 }
 
-function isServerRunning() {
+function isServerRunning(): boolean {
     const r = runScript('server-status.sh');
-    return r.ok && r.out.includes('Server is running');
+    return r.ok && (r.out?.includes('Server is running') ?? false);
 }
 
-function buildConfigUrl(main, trans) {
+function buildConfigUrl(main: string, trans: string): string {
     return encodeURIComponent(JSON.stringify({ mainLang: `[${main}]`, transLang: `[${trans}]` }));
 }
 
-/**
- * Check if cache dir is safe to clear: must be a subdirectory inside project directory.
- * Not the project dir itself, not a parent, must be strictly inside.
- */
-function isCacheDirSafe() {
+function isCacheDirSafe(): boolean {
     if (!SUBTITLES_DIR) return false;
     try {
-        // Resolve and normalize paths (removes trailing slashes, resolves ..)
         const realCache = path.resolve(fs.realpathSync(SUBTITLES_DIR));
         const realProject = path.resolve(fs.realpathSync(PROJECT_DIR));
-        // Must be strictly inside project (not equal, not parent)
         return realCache !== realProject && realCache.startsWith(realProject + path.sep);
     } catch {
-        return false; // Path doesn't exist or can't be resolved
+        return false;
     }
 }
 
-/**
- * Clear our generated subtitle files from cache
- */
-function clearCache() {
+function clearCache(): number {
     if (!SUBTITLES_DIR || !fs.existsSync(SUBTITLES_DIR)) return 0;
     if (!isCacheDirSafe()) {
         console.error(`  ❌ Cache dir not inside project: ${SUBTITLES_DIR}`);
@@ -173,9 +182,22 @@ function clearCache() {
     return cleared;
 }
 
+async function fetchJson<T = any>(url: string, timeout = 10000): Promise<{ status: number; data: T }> {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+    const data = await response.json() as T;
+    return { status: response.status, data };
+}
+
+async function fetchBuffer(url: string, timeout = 30000): Promise<Buffer> {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+}
+
 // === Tests ===
 
-async function testServerStartup(skipClear) {
+async function testServerStartup(skipClear: boolean): Promise<boolean> {
     log('\n=== Server Startup ===');
 
     if (isServerRunning()) {
@@ -195,20 +217,20 @@ async function testServerStartup(skipClear) {
     }
 
     try {
-        const res = await axios.get(`${BASE_URL}/manifest.json`, { timeout: 5000 });
+        const res = await fetchJson(`${BASE_URL}/manifest.json`, 5000);
         test('Server responds', res.status === 200);
         return true;
-    } catch (e) {
+    } catch (e: any) {
         fail('Server responds', e.message);
         return false;
     }
 }
 
-async function testManifest() {
+async function testManifest(): Promise<boolean> {
     log('\n=== Manifest ===');
 
     try {
-        const res = await axios.get(`${BASE_URL}/manifest.json`);
+        const res = await fetchJson(`${BASE_URL}/manifest.json`);
         manifest = res.data;
 
         test('Manifest fetch', res.status === 200);
@@ -216,67 +238,64 @@ async function testManifest() {
         test('Has subtitles resource', manifest.resources?.includes('subtitles'));
         test('Has movie+series types', manifest.types?.includes('movie') && manifest.types?.includes('series'));
 
-        const mainCfg = manifest.config?.find(c => c.key === 'mainLang');
-        const transCfg = manifest.config?.find(c => c.key === 'transLang');
+        const mainCfg = manifest.config?.find((c: any) => c.key === 'mainLang');
+        const transCfg = manifest.config?.find((c: any) => c.key === 'transLang');
         test('Has language configs', mainCfg?.options?.length > 50 && transCfg?.options?.length > 50);
 
         return true;
-    } catch (e) {
+    } catch (e: any) {
         fail('Manifest fetch', e.message);
         return false;
     }
 }
 
-async function testConfigurePage() {
+async function testConfigurePage(): Promise<boolean> {
     log('\n=== Configure Page ===');
 
     try {
-        const res = await axios.get(`${BASE_URL}/configure`);
-        const html = res.data;
+        const response = await fetch(`${BASE_URL}/configure`, { signal: AbortSignal.timeout(10000) });
+        const html = await response.text();
 
-        test('Page loads', res.status === 200);
-        test('Is HTML', res.headers['content-type'].includes('text/html'));
+        test('Page loads', response.status === 200);
+        test('Is HTML', (response.headers.get('content-type') || '').includes('text/html'));
         test('Has language selectors', html.includes('mainLang') && html.includes('transLang'));
         test('Has install mechanism', html.includes('stremio://') || html.toLowerCase().includes('install'));
 
         return true;
-    } catch (e) {
+    } catch (e: any) {
         fail('Configure page', e.message);
         return false;
     }
 }
 
-async function testUserManifests() {
+async function testUserManifests(): Promise<UserManifest[]> {
     log('\n=== User Manifests ===');
 
-    const userManifests = [];
+    const userManifests: UserManifest[] = [];
     for (const pair of LANGUAGE_PAIRS) {
         const url = `${BASE_URL}/${buildConfigUrl(pair.main, pair.trans)}/manifest.json`;
         try {
-            const res = await axios.get(url, { timeout: 10000 });
+            const res = await fetchJson(url, 10000);
             test(`${pair.name} manifest`, res.status === 200 && res.data.id);
             userManifests.push({ pair, configUrl: buildConfigUrl(pair.main, pair.trans) });
-        } catch (e) {
+        } catch (e: any) {
             fail(`${pair.name} manifest`, e.message);
         }
     }
     return userManifests;
 }
 
-async function testSubtitles(userManifests) {
+async function testSubtitles(userManifests: UserManifest[]): Promise<void> {
     log('\n=== Subtitle Requests (Movies) ===');
 
-    // Distribute language pairs across movies to ensure all charset combinations get tested
-    // Each movie tests 2 pairs, rotating through all pairs across movies
     const pairsPerMovie = 2;
 
     for (let movieIdx = 0; movieIdx < TEST_MOVIES.length; movieIdx++) {
         const movie = TEST_MOVIES[movieIdx];
         log(`\n  ${movie.name} (${movie.id}):`);
 
-        // Calculate which pairs to test for this movie (rotate through all pairs)
         const startPairIdx = (movieIdx * pairsPerMovie) % userManifests.length;
-        const pairsToTest = [];
+        const pairsToTest: UserManifest[] = [];
         for (let i = 0; i < pairsPerMovie && i < userManifests.length; i++) {
             pairsToTest.push(userManifests[(startPairIdx + i) % userManifests.length]);
         }
@@ -285,15 +304,14 @@ async function testSubtitles(userManifests) {
             const testName = `${movie.name}/${pair.name}`;
             const url = `${BASE_URL}/${configUrl}/subtitles/movie/${movie.id}.json`;
 
-            markLogPosition(); // Mark log position before request
+            markLogPosition();
 
             try {
-                const res = await axios.get(url, { timeout: 120000 });
+                const res = await fetchJson(url, 120000);
                 test(`${testName} request`, res.status === 200);
 
                 const subs = res.data.subtitles || [];
                 if (subs.length === 0) {
-                    // Get server logs to explain WHY no subtitles
                     const logs = getRecentLogs(movie.id);
                     const reason = logs.includes('No subtitles found for language')
                         ? logs.match(/No subtitles found for language (\w+)/)?.[0] || 'API returned no subs'
@@ -304,24 +322,24 @@ async function testSubtitles(userManifests) {
                 }
                 test(`${testName} has subtitles`, true, `(${subs.length} versions)`);
 
-                // Fetch and validate first subtitle
-                const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-                const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+                const subBuffer = await fetchBuffer(subs[0].url, 30000);
+                const content = await decodeSubtitleBuffer(subBuffer, null, { skipLanguageValidation: true });
 
-                // Validate SRT format
+                if (!content) {
+                    fail(`${testName} decode`, 'decodeSubtitleBuffer returned null');
+                    continue;
+                }
+
                 const srtValidation = validateSrtFormat(content);
                 test(`${testName} SRT format`, srtValidation.valid, srtValidation.errors.join(', '));
 
-                // Validate encoding
-                const encValidation = validateEncoding(content, { movieConfig: movie, mainLang: pair.main, transLang: pair.trans });
+                const encValidation = await validateEncoding(content, { movieConfig: movie, mainLang: pair.main, transLang: pair.trans });
                 test(`${testName} encoding`, encValidation.valid, encValidation.errors.join(', '));
 
-                // Check dual-language format
                 const dual = checkDualLanguage(content);
                 test(`${testName} dual-language`, dual.hasItalics, `(${dual.italicCount} italic, ${srtValidation.cueCount} cues)`);
 
-                // Validate main language content is present
-                const mainExpected = getExpectedStringsForLanguage(movie, pair.main);
+                const mainExpected = await getExpectedStringsForLanguage(movie, pair.main);
                 if (mainExpected.length > 0) {
                     const mainCheck = checkExpectedStrings(content, mainExpected);
                     test(`${testName} main lang strings`, mainCheck.success,
@@ -330,8 +348,7 @@ async function testSubtitles(userManifests) {
                     fail(`${testName} main lang strings`, `no expected strings defined for ${pair.main}`);
                 }
 
-                // Validate translation language content is present
-                const transExpected = getExpectedStringsForLanguage(movie, pair.trans);
+                const transExpected = await getExpectedStringsForLanguage(movie, pair.trans);
                 if (transExpected.length > 0) {
                     const transCheck = checkExpectedStrings(content, transExpected);
                     test(`${testName} trans lang strings`, transCheck.success,
@@ -340,17 +357,17 @@ async function testSubtitles(userManifests) {
                     fail(`${testName} trans lang strings`, `no expected strings defined for ${pair.trans}`);
                 }
 
-            } catch (e) {
+            } catch (e: any) {
                 fail(`${testName} request`, e.message);
             }
         }
     }
 }
 
-async function testSeries(userManifests) {
+async function testSeries(userManifests: UserManifest[]): Promise<void> {
     log('\n=== Subtitle Requests (Series) ===');
     if (!userManifests.length) { log('  Skipping - no manifests'); return; }
-    if (!TEST_SERIES_LIST.length) { log('  Skipping - no series in movies.js'); return; }
+    if (!TEST_SERIES_LIST.length) { log('  Skipping - no series in movies.ts'); return; }
 
     const { pair, configUrl } = userManifests[0];
 
@@ -359,33 +376,34 @@ async function testSeries(userManifests) {
         const testName = `${series.name} S${series.season}E${series.episode}`;
         log(`\n  ${testName}:`);
 
-        markLogPosition(); // Mark log position before request
+        markLogPosition();
 
         try {
-            const res = await axios.get(`${BASE_URL}/${configUrl}/subtitles/series/${seriesId}.json`, { timeout: 120000 });
+            const res = await fetchJson(`${BASE_URL}/${configUrl}/subtitles/series/${seriesId}.json`, 120000);
             test(`${testName} request`, res.status === 200);
 
             const subs = res.data.subtitles || [];
             if (subs.length > 0) {
                 test(`${testName} has subtitles`, true, `(${subs.length} versions)`);
 
-                const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-                const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+                const subBuffer = await fetchBuffer(subs[0].url, 30000);
+                const content = await decodeSubtitleBuffer(subBuffer, null, { skipLanguageValidation: true });
 
-                // Validate SRT format
+                if (!content) {
+                    fail(`${testName} decode`, 'decodeSubtitleBuffer returned null');
+                    continue;
+                }
+
                 const srtValidation = validateSrtFormat(content);
                 test(`${testName} SRT format`, srtValidation.valid, srtValidation.errors.join(', '));
 
-                // Validate encoding
-                const encValidation = validateEncoding(content, { movieConfig: series, mainLang: pair.main, transLang: pair.trans });
+                const encValidation = await validateEncoding(content, { movieConfig: series, mainLang: pair.main, transLang: pair.trans });
                 test(`${testName} encoding`, encValidation.valid, encValidation.errors.join(', '));
 
-                // Check dual-language format
                 const dual = checkDualLanguage(content);
                 test(`${testName} dual-language`, dual.hasItalics, `(${dual.italicCount} italic, ${srtValidation.cueCount} cues)`);
 
-                // Validate main language content is present
-                const mainExpected = getExpectedStringsForLanguage(series, pair.main);
+                const mainExpected = await getExpectedStringsForLanguage(series, pair.main);
                 if (mainExpected.length > 0) {
                     const mainCheck = checkExpectedStrings(content, mainExpected);
                     test(`${testName} main lang strings`, mainCheck.success,
@@ -394,8 +412,7 @@ async function testSeries(userManifests) {
                     fail(`${testName} main lang strings`, `no expected strings defined for ${pair.main}`);
                 }
 
-                // Validate translation language content is present
-                const transExpected = getExpectedStringsForLanguage(series, pair.trans);
+                const transExpected = await getExpectedStringsForLanguage(series, pair.trans);
                 if (transExpected.length > 0) {
                     const transCheck = checkExpectedStrings(content, transExpected);
                     test(`${testName} trans lang strings`, transCheck.success,
@@ -404,7 +421,6 @@ async function testSeries(userManifests) {
                     fail(`${testName} trans lang strings`, `no expected strings defined for ${pair.trans}`);
                 }
             } else {
-                // Get server logs to explain WHY no subtitles
                 const logs = getRecentLogs(series.id);
                 const reason = logs.includes('No subtitles found for language')
                     ? logs.match(/No subtitles found for language (\w+)/)?.[0] || 'API returned no subs'
@@ -412,57 +428,48 @@ async function testSeries(userManifests) {
                     : 'No subtitles from API';
                 fail(`${testName} has subtitles`, reason);
             }
-        } catch (e) {
+        } catch (e: any) {
             fail(`${testName} request`, e.message);
         }
     }
 }
 
-async function testErrorHandling(userManifests) {
+async function testErrorHandling(userManifests: UserManifest[]): Promise<void> {
     log('\n=== Error Handling ===');
     if (!userManifests.length) { log('  Skipping - no manifests'); return; }
 
     const { configUrl } = userManifests[0];
 
-    // Invalid IMDB
     try {
-        const res = await axios.get(`${BASE_URL}/${configUrl}/subtitles/movie/tt9999999999.json`, { timeout: 30000 });
+        const res = await fetchJson(`${BASE_URL}/${configUrl}/subtitles/movie/tt9999999999.json`, 30000);
         test('Invalid IMDB → empty', res.data.subtitles?.length === 0);
-    } catch (e) {
-        test('Invalid IMDB handled', e.response?.status !== 500);
+    } catch (e: any) {
+        test('Invalid IMDB handled', !(e.message?.includes('500')));
     }
 
-    // Invalid config
     try {
-        await axios.get(`${BASE_URL}/invalid-json/manifest.json`, { timeout: 10000 });
+        await fetchJson(`${BASE_URL}/invalid-json/manifest.json`, 10000);
         test('Invalid config handled', true);
     } catch {
         test('Invalid config handled', true);
     }
 
-    // Same language
     try {
         const testMovie = TEST_MOVIES[0] || { id: 'tt0133093' };
-        const res = await axios.get(`${BASE_URL}/${buildConfigUrl('eng', 'eng')}/subtitles/movie/${testMovie.id}.json`, { timeout: 30000 });
+        const res = await fetchJson(`${BASE_URL}/${buildConfigUrl('eng', 'eng')}/subtitles/movie/${testMovie.id}.json`, 30000);
         test('Same language → empty', res.data.subtitles?.length === 0);
     } catch {
         test('Same language handled', true);
     }
 }
 
-/**
- * Test language code aliases - verify alternate codes map to correct languages.
- * Tests that rom/rum/mol → Romanian and zhe → Chinese.
- */
-async function testLanguageAliases() {
+async function testLanguageAliases(): Promise<void> {
     log('\n=== Language Code Aliases ===');
 
-    // Use The Matrix (tt0133093) as test movie - it has Romanian and Chinese expected strings
     const testMovie = movies.find(m => m.id === 'tt0133093') || { id: 'tt0133093', name: 'The Matrix' };
     const romanianStrings = testMovie.expectedStrings?.['ro'] || ['Matrix', 'este', 'sunt'];
     const chineseStrings = testMovie.expectedStrings?.['zh'] || ['矩陣', '母體'];
 
-    // Test Romanian aliases: ron, rum, mol should all return Romanian subtitles
     const romanianAliases = ['ron', 'rum', 'mol'];
     for (const alias of romanianAliases) {
         const testName = `${alias} → Romanian`;
@@ -471,7 +478,7 @@ async function testLanguageAliases() {
         markLogPosition();
 
         try {
-            const res = await axios.get(url, { timeout: 120000 });
+            const res = await fetchJson(url, 120000);
             test(`${testName} request`, res.status === 200);
 
             const subs = res.data.subtitles || [];
@@ -486,27 +493,30 @@ async function testLanguageAliases() {
             }
             test(`${testName} has subtitles`, true, `(${subs.length} versions)`);
 
-            // Fetch and validate content contains Romanian
-            const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-            const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+            const subBuffer = await fetchBuffer(subs[0].url, 30000);
+            const content = await decodeSubtitleBuffer(subBuffer, null, { skipLanguageValidation: true });
+
+            if (!content) {
+                fail(`${testName} decode`, 'decodeSubtitleBuffer returned null');
+                continue;
+            }
 
             const roCheck = checkExpectedStrings(content, romanianStrings);
             test(`${testName} contains Romanian`, roCheck.success,
                 roCheck.success ? '' : `missing: ${roCheck.missing.join(', ')}`);
 
-        } catch (e) {
+        } catch (e: any) {
             fail(`${testName} request`, e.message);
         }
     }
 
-    // Test Chinese alias: zhe should return Chinese subtitles
     const testName = 'zhe → Chinese';
     const url = `${BASE_URL}/${buildConfigUrl('eng', 'zhe')}/subtitles/movie/${testMovie.id}.json`;
 
     markLogPosition();
 
     try {
-        const res = await axios.get(url, { timeout: 120000 });
+        const res = await fetchJson(url, 120000);
         test(`${testName} request`, res.status === 200);
 
         const subs = res.data.subtitles || [];
@@ -521,20 +531,24 @@ async function testLanguageAliases() {
         }
         test(`${testName} has subtitles`, true, `(${subs.length} versions)`);
 
-        // Fetch and validate content contains Chinese
-        const subRes = await axios.get(subs[0].url, { responseType: 'arraybuffer', timeout: 30000 });
-        const content = await decodeSubtitleBuffer(Buffer.from(subRes.data), null, true);
+        const subBuffer = await fetchBuffer(subs[0].url, 30000);
+        const content = await decodeSubtitleBuffer(subBuffer, null, { skipLanguageValidation: true });
+
+        if (!content) {
+            fail(`${testName} decode`, 'decodeSubtitleBuffer returned null');
+            return;
+        }
 
         const zhCheck = checkExpectedStrings(content, chineseStrings);
         test(`${testName} contains Chinese`, zhCheck.success,
             zhCheck.success ? '' : `missing: ${zhCheck.missing.join(', ')}`);
 
-    } catch (e) {
+    } catch (e: any) {
         fail(`${testName} request`, e.message);
     }
 }
 
-async function stopServer() {
+async function stopServer(): Promise<void> {
     if (serverStartedByUs) {
         log('\n=== Stopping Server ===');
         runScript('stop-server.sh');
@@ -544,7 +558,7 @@ async function stopServer() {
 
 // === Main ===
 
-async function main() {
+async function main(): Promise<void> {
     console.log('╔════════════════════════════════════════════════════════════╗');
     console.log('║         Strelingo Addon - End-to-End Test Suite           ║');
     console.log('╚════════════════════════════════════════════════════════════╝\n');
@@ -553,7 +567,6 @@ async function main() {
     const keepServer = process.argv.includes('--keep');
     const skipClear = process.argv.includes('--skip-clear');
 
-    // Pre-flight
     log('=== Pre-flight ===');
     if (!SUBTITLES_DIR) {
         console.error('❌ LOCAL_STORAGE_DIR not set');
@@ -585,7 +598,6 @@ async function main() {
         else log('\n--keep flag set, server left running');
     }
 
-    // Summary
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log('\n' + '═'.repeat(60));
     console.log(`Results: ${results.passed} passed, ${results.failed} failed (${duration}s)`);

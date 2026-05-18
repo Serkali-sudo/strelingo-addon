@@ -6,6 +6,9 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PID_FILE="$PROJECT_DIR/server.pid"
 LOG_FILE="$PROJECT_DIR/server.log"
 
+# Use PORT env var if set, otherwise default to 7000
+PORT="${PORT:-7000}"
+
 # Check if server is already running
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
@@ -20,11 +23,11 @@ fi
 
 # Start server
 cd "$PROJECT_DIR"
-echo "Starting server..."
+echo "Starting server on port $PORT..."
 echo "Log file: $LOG_FILE"
 
-# Start node in background, redirect output to log file
-nohup node index.js > "$LOG_FILE" 2>&1 &
+# Start with tsx in background, redirect output to log file
+nohup npx tsx src/index.ts > "$LOG_FILE" 2>&1 &
 PID=$!
 
 # Save PID
@@ -39,9 +42,9 @@ for i in {1..60}; do
         exit 1
     fi
 
-    if curl -s http://localhost:7000 > /dev/null 2>&1; then
+    if curl -s "http://localhost:$PORT" > /dev/null 2>&1; then
         echo "Server is ready and responding (PID: $PID)"
-        echo "Access at: http://localhost:7000"
+        echo "Access at: http://localhost:$PORT"
         echo "Logs: tail -f $LOG_FILE"
         exit 0
     fi

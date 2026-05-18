@@ -1,19 +1,23 @@
 /**
  * Extract common words/phrases from decoded subtitle outputs.
- * This helps find expected strings for each language in movies.js.
+ * This helps find expected strings for each language in movies.ts.
  *
- * Usage: node test/extract-expected.js tt4154796
+ * Usage: npx tsx test/extract-expected.ts tt4154796
  */
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const OUTPUT_DIR = path.join(__dirname, 'output');
 const movieId = process.argv[2];
 
 if (!movieId) {
-    console.log('Usage: node test/extract-expected.js <imdb-id>');
-    console.log('Example: node test/extract-expected.js tt4154796');
+    console.log('Usage: npx tsx test/extract-expected.ts <imdb-id>');
+    console.log('Example: npx tsx test/extract-expected.ts tt4154796');
     process.exit(1);
 }
 
@@ -23,9 +27,8 @@ if (!fs.existsSync(movieDir)) {
     process.exit(1);
 }
 
-// Get all .srt files grouped by language
 const files = fs.readdirSync(movieDir).filter(f => f.endsWith('.srt'));
-const byLang = {};
+const byLang: Record<string, string[]> = {};
 
 for (const file of files) {
     const lang = file.split('_')[0];
@@ -37,26 +40,22 @@ console.log(`\nExtracted expected strings for ${movieId}:\n`);
 console.log('expectedStrings: {');
 
 for (const [lang, langFiles] of Object.entries(byLang).sort()) {
-    // Read first file for this language
     const filepath = path.join(movieDir, langFiles[0]);
     const content = fs.readFileSync(filepath, 'utf8');
 
-    // Extract words (3+ chars, non-numeric, non-timing)
     const words = content
-        .replace(/\d{2}:\d{2}:\d{2},\d{3}/g, '')  // Remove timestamps
+        .replace(/\d{2}:\d{2}:\d{2},\d{3}/g, '')
         .replace(/-->/g, '')
-        .replace(/<[^>]+>/g, '')  // Remove HTML tags
-        .replace(/[^\p{L}\p{M}\s]/gu, ' ')  // Keep only letters
+        .replace(/<[^>]+>/g, '')
+        .replace(/[^\p{L}\p{M}\s]/gu, ' ')
         .split(/\s+/)
         .filter(w => w.length >= 3);
 
-    // Count word frequency
-    const freq = {};
+    const freq: Record<string, number> = {};
     for (const word of words) {
         freq[word] = (freq[word] || 0) + 1;
     }
 
-    // Get top words (frequency > 5, length >= 4)
     const topWords = Object.entries(freq)
         .filter(([word, count]) => count > 5 && word.length >= 4)
         .sort((a, b) => b[1] - a[1])
