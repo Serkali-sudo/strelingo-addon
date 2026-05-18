@@ -5,6 +5,7 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  "workers_dev": false,
   "observability": {
     "enabled": true
   },
