@@ -1209,7 +1209,7 @@ async function handleSubtitlesRequest(c: any) {
                 finalSubtitles.push({
                     id: subtitleEntryId,
                     url: uploadUrl,
-                    lang: `${mainLang}+${transLang}`,
+                    lang: `${languageMap[mainLang as keyof typeof languageMap] || mainLang}+${languageMap[transLang as keyof typeof languageMap] || transLang}`,
                     label: `${languageMap[mainLang as keyof typeof languageMap] || mainLang}+${languageMap[transLang as keyof typeof languageMap] || transLang}`
                 });
             } else {
