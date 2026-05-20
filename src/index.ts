@@ -63,6 +63,7 @@ interface SubtitleInfo {
     releaseName: string;
     rating: number;
     downloads: number;
+    provider?: string;
 }
 
 interface SRTLine {
@@ -447,7 +448,8 @@ async function fetchAllSubtitles(
                     id: sub.id,
                     url: sub.url,
                     lang: sub.lang || 'jpn',
-                    downloads: data.subtitles.length - idx
+                    downloads: data.subtitles.length - idx,
+                    provider: 'Buta no Subs'
                 }));
                 return { subtitles };
             }).catch(() => {
@@ -520,7 +522,8 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
             langName: languageMap[sub.lang as keyof typeof languageMap] || sub.lang,
             releaseName: 'OpenSubtitles',
             rating: 0,
-            downloads: sub.downloads || (langSubs.length - idx)
+            downloads: sub.downloads || (langSubs.length - idx),
+            provider: sub.provider || 'OpenSubtitles'
         };
     });
 
@@ -1102,7 +1105,6 @@ async function handleSubtitlesRequest(c: any) {
                 continue;
             }
 
-            let uploadedToVercel = false;
             let uploadUrl: string | null = null;
             let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${transSubInfo.id}`;
 
@@ -1140,7 +1142,6 @@ async function handleSubtitlesRequest(c: any) {
                     );
                     console.log(`Uploaded v${version} to Vercel Blob: ${url}`);
                     uploadUrl = url;
-                    uploadedToVercel = true;
                     subtitleEntryId += '-vercel';
                 } catch (e: any) {
                     console.error(`Failed to upload merged SRT for v${version} to Vercel Blob: ${e.message}`);
@@ -1206,10 +1207,21 @@ async function handleSubtitlesRequest(c: any) {
             }
 
             if (uploadUrl) {
+                const mainProvider = selectedMainSubInfo.provider || 'OpenSubtitles';
+                const transProvider = transSubInfo.provider || 'OpenSubtitles';
+                const mainLangName = languageMap[mainLang as keyof typeof languageMap] || mainLang;
+                const transLangName = languageMap[transLang as keyof typeof languageMap] || transLang;
+
+                const labelParts = [
+                    `${mainLangName}+${transLangName}`,
+                    mainProvider === transProvider ? mainProvider : `${mainProvider}+${transProvider}`
+                ];
+
                 finalSubtitles.push({
                     id: subtitleEntryId,
                     url: uploadUrl,
-                    lang: `${mainLang}+${transLang}`
+                    lang: `${mainLang}+${transLang}`,
+                    label: labelParts.join(' · ')
                 });
             } else {
                 console.warn(`Failed to upload v${version} to either Vercel Blob or Supabase Storage.`);
