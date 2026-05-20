@@ -1206,11 +1206,12 @@ async function handleSubtitlesRequest(c: any) {
             }
 
             if (uploadUrl) {
+                const readableLang = `${languageMap[mainLang as keyof typeof languageMap] || mainLang}+${languageMap[transLang as keyof typeof languageMap] || transLang}`;
                 finalSubtitles.push({
                     id: subtitleEntryId,
                     url: uploadUrl,
-                    lang: `${mainLang}+${transLang}`,
-                    label: `${languageMap[mainLang as keyof typeof languageMap] || mainLang}+${languageMap[transLang as keyof typeof languageMap] || transLang}`
+                    lang: readableLang,
+                    label: readableLang
                 });
             } else {
                 console.warn(`Failed to upload v${version} to either Vercel Blob or Supabase Storage.`);
