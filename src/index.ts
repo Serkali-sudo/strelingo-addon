@@ -407,15 +407,6 @@ function escapeSrtMarkup(text: string): string {
         .replace(/>/g, '&gt;');
 }
 
-function millisToSrtTime(ms: number): string {
-    if (!Number.isFinite(ms) || ms < 0) ms = 0;
-    const hours = Math.floor(ms / 3600000);
-    const minutes = Math.floor((ms % 3600000) / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
-    const milliseconds = ms % 1000;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
-}
-
 const TIME_MS_RE = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/;
 const AD_FILTER_RE = /OpenSubtitles\.org|OpenSubtitles\.com|osdb\.link|Advertise your/;
 
@@ -715,8 +706,8 @@ function combineSubtitleTracks(
 
         mergedSubs.push({
             id: mainSub.id,
-            startTime: millisToSrtTime(mainSub.startMs),
-            endTime: millisToSrtTime(mainSub.endMs),
+            startTime: mainSub.startTime,
+            endTime: mainSub.endTime,
             text: mergedText,
         });
     }
@@ -814,28 +805,20 @@ function parseSrtRobust(srtText: string): any[] | null {
     return subtitles;
 }
 function formatSrt(subtitleArray: SRTLine[]): string | null {
-    if (!Array.isArray(subtitleArray) || subtitleArray.length === 0) {
-        console.error("Invalid input to formatSrt: not an array or empty.");
+    if (!Array.isArray(subtitleArray)) {
+        console.error("Invalid input to formatSrt: not an array.");
         return null;
     }
     try {
-        const parts: string[] = [];
-        for (let i = 0; i < subtitleArray.length; i++) {
-            const sub = subtitleArray[i];
-            if (!sub.startTime || !sub.endTime) {
-                console.warn(`formatSrt: skipping entry ${i} with missing timestamps`);
-                continue;
-            }
-            parts.push(
-                String(i + 1),
-                `${sub.startTime} --> ${sub.endTime}`,
-                sub.text || '',
-                ''
-            );
-        }
-        return parts.join('\n');
+        const parser = new SRTParser2();
+        const sanitizedArray = subtitleArray.map((sub, index) => ({
+            ...sub,
+            id: (index + 1).toString()
+        }));
+        return parser.toSrt(sanitizedArray);
     } catch (error: any) {
         console.error('Error formatting SRT:', error.message);
+        console.error('Problematic data for formatSrt:', JSON.stringify(subtitleArray.slice(0, 5)));
         return null;
     }
 }
