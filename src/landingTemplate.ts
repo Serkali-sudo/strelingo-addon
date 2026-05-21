@@ -70,6 +70,12 @@ body {
     color: #f1c40f;
 }
 
+.subtitle-line-sep {
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 12px;
+    letter-spacing: -1px;
+}
+
 @keyframes floatUp1 {
     0% { transform: translateY(110vh) translateX(0) rotate(-1deg); opacity: 0; }
     8% { opacity: 0.55; }
@@ -895,8 +901,9 @@ export default function landingTemplate(manifest: Manifest): string {
 
     const subtitleBgHTML = subtitlePairs.map((p, i) =>
         `<div class="subtitle-pair" style="left:${p.left};animation:${p.anim} ${p.dur} linear ${p.delay} infinite;">` +
-        `<span class="subtitle-line-1">${p.l1}</span>` +
-        `<span class="subtitle-line-2">${p.l2}</span>` +
+        `<span class="subtitle-line-1">┌ ${p.l1}</span>` +
+        `<span class="subtitle-line-sep">${'─ '.repeat(8)}</span>` +
+        `<span class="subtitle-line-2">└ ${p.l2}</span>` +
         `</div>`
     ).join('\n');
 
