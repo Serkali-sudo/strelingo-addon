@@ -401,7 +401,8 @@ function makeCacheKey(url: string): Request | null {
 async function getCachedResponse(cacheKey: Request | null): Promise<Response | null> {
     if (!cacheKey || typeof caches === 'undefined') return null;
     try {
-        return await caches.default.match(cacheKey);
+        const match = caches.default.match.bind(caches.default);
+        return await match(cacheKey);
     } catch (e: any) {
         console.warn("Cache read error:", e.message);
         return null;
@@ -411,7 +412,8 @@ async function getCachedResponse(cacheKey: Request | null): Promise<Response | n
 function putCachedResponse(cacheKey: Request | null, response: Response, waitUntil?: (p: Promise<any>) => void): void {
     if (!cacheKey || typeof caches === 'undefined') return;
     try {
-        const putPromise = caches.default.put(cacheKey, response.clone());
+        const put = caches.default.put.bind(caches.default);
+        const putPromise = put(cacheKey, response.clone());
         if (waitUntil) {
             waitUntil(putPromise);
         } else {
