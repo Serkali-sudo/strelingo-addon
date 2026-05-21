@@ -624,7 +624,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             const cleanTransText = sanitizeText(bestTransSub.text);
             const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
             if (flatTransText) {
-                mergedText = (flatMainText + '\n<i>' + flatTransText + '</i>').trim();
+                mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
             }
         }
 
