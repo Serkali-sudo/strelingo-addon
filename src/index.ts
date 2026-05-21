@@ -407,6 +407,15 @@ function escapeSrtMarkup(text: string): string {
         .replace(/>/g, '&gt;');
 }
 
+function millisToSrtTime(ms: number): string {
+    if (!Number.isFinite(ms) || ms < 0) ms = 0;
+    const hours = Math.floor(ms / 3600000);
+    const minutes = Math.floor((ms % 3600000) / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    const milliseconds = ms % 1000;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+}
+
 const TIME_MS_RE = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/;
 const AD_FILTER_RE = /OpenSubtitles\.org|OpenSubtitles\.com|osdb\.link|Advertise your/;
 
@@ -706,8 +715,8 @@ function combineSubtitleTracks(
 
         mergedSubs.push({
             id: mainSub.id,
-            startTime: mainSub.startTime,
-            endTime: mainSub.endTime,
+            startTime: millisToSrtTime(mainSub.startMs),
+            endTime: millisToSrtTime(mainSub.endMs),
             text: mergedText,
         });
     }
