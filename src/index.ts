@@ -574,9 +574,16 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
         if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);
 
         const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
 
+        let t0 = performance.now();
+        const buffer = Buffer.from(arrayBuffer);
+        let t1 = performance.now();
+        console.log(`[CPU] Buffer.from: ${(t1 - t0).toFixed(2)}ms`);
+
+        t0 = performance.now();
         let subtitleText = await decodeSubtitleBuffer(buffer, languageCode);
+        t1 = performance.now();
+        console.log(`[CPU] decodeSubtitleBuffer: ${(t1 - t0).toFixed(2)}ms`);
         if (!subtitleText) {
             console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
             return null;
@@ -584,7 +591,10 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
 
         if (sourceFormat.toLowerCase() !== 'srt') {
             console.log(`Converting subtitle from ${sourceFormat} to srt.`);
+            t0 = performance.now();
             const convertedSrt = SubtitleConverter.convert(subtitleText, sourceFormat);
+            t1 = performance.now();
+            console.log(`[CPU] SubtitleConverter.convert: ${(t1 - t0).toFixed(2)}ms`);
             if (convertedSrt) {
                 subtitleText = convertedSrt;
             } else {

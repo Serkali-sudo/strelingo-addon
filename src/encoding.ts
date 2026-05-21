@@ -275,7 +275,10 @@ export async function detectLanguage(text: string, expectedLang: string | null =
         return { detected: null, detected3: 'und', isMatch: false, isRelatedMatch: false };
     }
 
+    const t0 = performance.now();
     const results = francAll(sample);
+    const t1 = performance.now();
+    console.log(`[CPU] francAll: ${(t1 - t0).toFixed(2)}ms`);
 
     if (!results.length || results[0][0] === 'und') {
         return { detected: null, detected3: 'und', isMatch: false, isRelatedMatch: false };
@@ -663,13 +666,19 @@ export async function decodeSubtitleBuffer(
     // No BOM - use chardet to detect encoding
     else {
         const sample = buffer.slice(0, Math.min(buffer.length, CHARDET_SAMPLE_SIZE));
+        let t0 = performance.now();
         const detectedEncoding = chardet.detect(sample);
+        let t1 = performance.now();
+        log(`[CPU] chardet.detect: ${(t1 - t0).toFixed(2)}ms`);
         const encoding = normalizeEncoding(detectedEncoding);
 
         if (encoding !== 'utf8') {
             log(`[ENCODING] chardet detected: ${detectedEncoding} -> using ${encoding}`);
             try {
+                t0 = performance.now();
                 subtitleText = iconv.decode(buffer, encoding);
+                t1 = performance.now();
+                log(`[CPU] iconv.decode: ${(t1 - t0).toFixed(2)}ms`);
             } catch (e) {
                 log(`[ENCODING] iconv decode failed for ${encoding}, falling back to UTF-8`);
                 subtitleText = buffer.toString('utf8');
@@ -679,7 +688,10 @@ export async function decodeSubtitleBuffer(
         }
     }
 
+    let t0 = performance.now();
     subtitleText = await fixCharacterEncodings(subtitleText, languageHint, silent);
+    let t1 = performance.now();
+    log(`[CPU] fixCharacterEncodings: ${(t1 - t0).toFixed(2)}ms`);
 
     if (subtitleText.startsWith('\uFEFF')) {
         subtitleText = subtitleText.slice(1);
@@ -689,7 +701,10 @@ export async function decodeSubtitleBuffer(
     }
 
     if (languageHint && !skipLanguageValidation) {
+        t0 = performance.now();
         const langValid = await validateLanguage(subtitleText, languageHint, { skipCorruptionCheck: true });
+        t1 = performance.now();
+        log(`[CPU] validateLanguage: ${(t1 - t0).toFixed(2)}ms`);
         if (!langValid) {
             log(`[ENCODING] Final validation failed: detected language doesn't match expected ${languageHint}. Rejecting.`);
             return null;
