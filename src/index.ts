@@ -62,7 +62,7 @@ interface SubtitleInfo {
     langName: string;
     releaseName: string;
     rating: number;
-    downloads: number;
+    g: number;
 }
 
 interface SRTLine {
@@ -480,11 +480,11 @@ async function fetchAllSubtitles(
                 if (!data || !Array.isArray(data.subtitles)) {
                     return { subtitles: [] };
                 }
-                const subtitles = data.subtitles.map((sub: any, idx: number) => ({
+                const subtitles = data.subtitles.map((sub: any) => ({
                     id: sub.id,
                     url: sub.url,
                     lang: sub.lang || 'jpn',
-                    downloads: data.subtitles.length - idx
+                    g: sub.g || '0'
                 }));
                 return { subtitles };
             }).catch(() => {
@@ -543,12 +543,12 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
             return aCodeIndex - bCodeIndex;
         }
 
-        const aDownloads = a.downloads || 0;
-        const bDownloads = b.downloads || 0;
-        return bDownloads - aDownloads;
+        const aG = parseInt(a.g) || 0;
+        const bG = parseInt(b.g) || 0;
+        return bG - aG;
     });
 
-    const subtitleList = langSubs.map((sub, idx) => {
+    const subtitleList = langSubs.map((sub) => {
         return {
             id: sub.id,
             url: sub.url,
@@ -557,7 +557,7 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
             langName: languageMap[sub.lang as keyof typeof languageMap] || sub.lang,
             releaseName: 'OpenSubtitles',
             rating: 0,
-            downloads: sub.downloads || (langSubs.length - idx)
+            g: parseInt(sub.g) || 0
         };
     });
 
@@ -1092,7 +1092,7 @@ async function handleSubtitlesRequest(c: any) {
         let selectedMainSubInfo: SubtitleInfo | null = null;
 
         for (const mainSubInfo of mainSubInfoList) {
-            console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, Downloads=${mainSubInfo.downloads}`);
+            console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, g=${mainSubInfo.g}`);
             const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang);
 
             if (!mainSubContent) {
