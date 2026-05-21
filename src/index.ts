@@ -364,6 +364,7 @@ function stripJsonExtension(str: string | undefined): string {
 function sanitizeText(text: string): string {
     if (!text) return '';
     text = text.replace(/<[^>]+>/g, '');
+    text = text.replace(/\{[^}]*\}/g, '');
     text = text.replace(/&nbsp;/gi, ' ')
         .replace(/&quot;/gi, '"')
         .replace(/&#39;/gi, "'")
