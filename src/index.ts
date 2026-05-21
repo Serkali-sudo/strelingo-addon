@@ -401,21 +401,21 @@ function makeCacheKey(url: string): Request | null {
 async function getCachedResponse(cacheKey: Request | null): Promise<Response | null> {
     if (!cacheKey || typeof caches === 'undefined') return null;
     try {
-        const match = caches.default.match.bind(caches.default);
-        return await match(cacheKey);
+        const cache = caches.default;
+        return await cache.match(cacheKey);
     } catch (e: any) {
         console.warn("Cache read error:", e.message);
         return null;
     }
 }
 
-function putCachedResponse(cacheKey: Request | null, response: Response, waitUntil?: (p: Promise<any>) => void): void {
+function putCachedResponse(cacheKey: Request | null, response: Response, executionCtx?: any): void {
     if (!cacheKey || typeof caches === 'undefined') return;
     try {
-        const put = caches.default.put.bind(caches.default);
-        const putPromise = put(cacheKey, response.clone());
-        if (waitUntil) {
-            waitUntil(putPromise);
+        const cache = caches.default;
+        const putPromise = cache.put(cacheKey, response.clone());
+        if (executionCtx?.waitUntil) {
+            executionCtx.waitUntil(putPromise);
         } else {
             putPromise.catch((e: any) => console.warn("Cache write error:", e.message));
         }
@@ -992,7 +992,7 @@ async function handleSubtitlesRequest(c: any) {
     if (mainLang === transLang) {
         console.log(`Error: Main language (${mainLang}) and Translation language (${transLang}) cannot be the same. Aborting.`);
         const res = c.json({ subtitles: [], cacheMaxAge: 3600 }, 200, { 'Cache-Control': 'public, max-age=3600' });
-        putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+        putCachedResponse(cacheKey, res, c.executionCtx);
         return res;
     }
 
@@ -1012,7 +1012,7 @@ async function handleSubtitlesRequest(c: any) {
     if (!imdbId || !imdbId.startsWith('tt')) {
         console.log('No valid IMDB ID provided');
         const res = c.json({ subtitles: [] }, 200, { 'Cache-Control': 'public, max-age=60' });
-        putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+        putCachedResponse(cacheKey, res, c.executionCtx);
         return res;
     }
 
@@ -1064,7 +1064,7 @@ async function handleSubtitlesRequest(c: any) {
         if (!allSubtitles) {
             console.log('Failed to fetch subtitles.');
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            putCachedResponse(cacheKey, res, c.executionCtx);
             return res;
         }
 
@@ -1077,14 +1077,14 @@ async function handleSubtitlesRequest(c: any) {
         if (!mainSubInfoList || mainSubInfoList.length === 0) {
             console.log(`No main language (${mainLang}) subtitles found.`);
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            putCachedResponse(cacheKey, res, c.executionCtx);
             return res;
         }
 
         if (!transSubInfoList || transSubInfoList.length === 0) {
             console.warn(`No translation language (${transLang}) subtitles found.`);
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            putCachedResponse(cacheKey, res, c.executionCtx);
             return res;
         }
 
@@ -1116,7 +1116,7 @@ async function handleSubtitlesRequest(c: any) {
         if (!mainParsed || !selectedMainSubInfo) {
             console.error("Failed to fetch and parse any of the available main subtitles. Cannot proceed.");
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            putCachedResponse(cacheKey, res, c.executionCtx);
             return res;
         }
 
@@ -1288,13 +1288,13 @@ async function handleSubtitlesRequest(c: any) {
         }, 200, {
             'Cache-Control': 'public, max-age=21600, s-maxage=21600, stale-while-revalidate=86400',
         });
-        putCachedResponse(cacheKey, successResponse, c.executionCtx?.waitUntil);
+        putCachedResponse(cacheKey, successResponse, c.executionCtx);
         return successResponse;
 
     } catch (e: any) {
         console.error('Error in subtitle handler:', e.message);
         const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-        putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+        putCachedResponse(cacheKey, res, c.executionCtx);
         return res;
     }
 }
@@ -1353,7 +1353,7 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
             'Cache-Control': 'public, max-age=86400'
         });
 
-        putCachedResponse(cacheKey, response, c.executionCtx?.waitUntil);
+        putCachedResponse(cacheKey, response, c.executionCtx);
 
         return response;
 
@@ -1409,7 +1409,7 @@ app.get('/serve-subtitles.srt', async (c) => {
             'Cache-Control': 'public, max-age=86400'
         });
 
-        putCachedResponse(cacheKey, response, c.executionCtx?.waitUntil);
+        putCachedResponse(cacheKey, response, c.executionCtx);
 
         return response;
 
