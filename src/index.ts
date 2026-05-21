@@ -1122,6 +1122,7 @@ async function handleSubtitlesRequest(c: any) {
 
         const finalSubtitles = [];
         const usedTransUrls = new Set();
+        const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
 
         for (const transSubInfo of transSubInfoList) {
             if (finalSubtitles.length >= 4) break;
@@ -1131,38 +1132,8 @@ async function handleSubtitlesRequest(c: any) {
             const version = finalSubtitles.length + 1;
             console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
-            const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
-
-            if (!transSubContent) {
-                console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
-                continue;
-            }
-
-            const transParsed = parseSrt(transSubContent);
-            if (!transParsed) {
-                console.warn(`Failed to parse content for translation v${version}. Skipping.`);
-                continue;
-            }
-
-            console.log(`Merging main with translation v${version}...`);
-            const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
-            if (!mergedParsed || mergedParsed.length === 0) {
-                console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
-                continue;
-            }
-
-            console.log(`Formatting merged SRT for v${version}...`);
-            const mergedSrtString = formatSrt(mergedParsed);
-            if (!mergedSrtString) {
-                console.warn(`Failed to format merged SRT for v${version}. Skipping.`);
-                continue;
-            }
-
-            let uploadedToVercel = false;
             let uploadUrl: string | null = null;
             let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${transSubInfo.id}`;
-
-            const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
 
             if (directServingEnabled) {
                 console.log(`Direct serving enabled! Generating edge-serving URL for v${version}...`);
@@ -1183,84 +1154,110 @@ async function handleSubtitlesRequest(c: any) {
                     : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
                 uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
                 subtitleEntryId += '-direct';
-            }
+            } else {
+                const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
 
-            if (!uploadUrl && !skipVercelBlob) {
-                console.log(`Attempting Vercel Blob upload for v${version}...`);
-                try {
-                    const blobFileName = type === 'series' && season && episode
-                        ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
-                        : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
-
-                    const { url } = await put(
-                        blobFileName,
-                        mergedSrtString,
-                        { access: 'public', addRandomSuffix: true }
-                    );
-                    console.log(`Uploaded v${version} to Vercel Blob: ${url}`);
-                    uploadUrl = url;
-                    uploadedToVercel = true;
-                    subtitleEntryId += '-vercel';
-                } catch (e: any) {
-                    console.error(`Failed to upload merged SRT for v${version} to Vercel Blob: ${e.message}`);
+                if (!transSubContent) {
+                    console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
+                    continue;
                 }
-            }
 
-            if (!uploadUrl && supabase) {
-                console.log(`Attempting Supabase Storage upload for v${version}...`);
-                try {
-                    const supabaseFileName = type === 'series' && season && episode
-                        ? `${imdbId}/S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
-                        : `${imdbId}/${mainLang}_${transLang}_v${version}.srt`;
+                const transParsed = parseSrt(transSubContent);
+                if (!transParsed) {
+                    console.warn(`Failed to parse content for translation v${version}. Skipping.`);
+                    continue;
+                }
 
-                    const { error: supabaseError } = await supabase
-                        .storage
-                        .from('subtitles')
-                        .upload(supabaseFileName, mergedSrtString, {
-                            cacheControl: '3600',
-                            upsert: true,
-                            contentType: 'text/srt; charset=utf-8'
-                        });
+                console.log(`Merging main with translation v${version}...`);
+                const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
+                if (!mergedParsed || mergedParsed.length === 0) {
+                    console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
+                    continue;
+                }
 
-                    if (supabaseError) throw supabaseError;
+                console.log(`Formatting merged SRT for v${version}...`);
+                const mergedSrtString = formatSrt(mergedParsed);
+                if (!mergedSrtString) {
+                    console.warn(`Failed to format merged SRT for v${version}. Skipping.`);
+                    continue;
+                }
 
-                    const { data: publicUrlData } = supabase
-                        .storage
-                        .from('subtitles')
-                        .getPublicUrl(supabaseFileName);
+                if (!skipVercelBlob) {
+                    console.log(`Attempting Vercel Blob upload for v${version}...`);
+                    try {
+                        const blobFileName = type === 'series' && season && episode
+                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                            : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
 
-                    if (!publicUrlData || !publicUrlData.publicUrl) {
-                        console.error(`Supabase upload successful for v${version}, but failed to get public URL.`);
-                    } else {
-                        uploadUrl = publicUrlData.publicUrl;
-                        console.log(`Uploaded v${version} to Supabase: ${uploadUrl}`);
-                        subtitleEntryId += '-supabase';
+                        const { url } = await put(
+                            blobFileName,
+                            mergedSrtString,
+                            { access: 'public', addRandomSuffix: true }
+                        );
+                        console.log(`Uploaded v${version} to Vercel Blob: ${url}`);
+                        uploadUrl = url;
+                        subtitleEntryId += '-vercel';
+                    } catch (e: any) {
+                        console.error(`Failed to upload merged SRT for v${version} to Vercel Blob: ${e.message}`);
                     }
-                } catch (e: any) {
-                    console.error(`Supabase Storage upload failed for v${version}: ${e.message}`);
                 }
-            }
 
-            const localStorageDir = getEnvVar(c, 'LOCAL_STORAGE_DIR');
-            const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+                if (!uploadUrl && supabase) {
+                    console.log(`Attempting Supabase Storage upload for v${version}...`);
+                    try {
+                        const supabaseFileName = type === 'series' && season && episode
+                            ? `${imdbId}/S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                            : `${imdbId}/${mainLang}_${transLang}_v${version}.srt`;
 
-            if (!uploadUrl && localStorageDir) {
-                console.log(`Attempting Local Storage upload for v${version}...`);
-                try {
-                    await fs.mkdir(localStorageDir, { recursive: true });
+                        const { error: supabaseError } = await supabase
+                            .storage
+                            .from('subtitles')
+                            .upload(supabaseFileName, mergedSrtString, {
+                                cacheControl: '3600',
+                                upsert: true,
+                                contentType: 'text/srt; charset=utf-8'
+                            });
 
-                    const localFileName = type === 'series' && season && episode
-                        ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
-                        : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
-                    const localFilePath = path.join(localStorageDir, localFileName);
+                        if (supabaseError) throw supabaseError;
 
-                    await fs.writeFile(localFilePath, mergedSrtString, 'utf-8');
+                        const { data: publicUrlData } = supabase
+                            .storage
+                            .from('subtitles')
+                            .getPublicUrl(supabaseFileName);
 
-                    uploadUrl = `${externalUrl}/subtitles/${localFileName}`;
-                    console.log(`Uploaded v${version} to Local Storage: ${uploadUrl}`);
-                    subtitleEntryId += '-local';
-                } catch (e: any) {
-                    console.warn(`Local Storage write failed (normal on read-only environments like Workers): ${e.message}`);
+                        if (!publicUrlData || !publicUrlData.publicUrl) {
+                            console.error(`Supabase upload successful for v${version}, but failed to get public URL.`);
+                        } else {
+                            uploadUrl = publicUrlData.publicUrl;
+                            console.log(`Uploaded v${version} to Supabase: ${uploadUrl}`);
+                            subtitleEntryId += '-supabase';
+                        }
+                    } catch (e: any) {
+                        console.error(`Supabase Storage upload failed for v${version}: ${e.message}`);
+                    }
+                }
+
+                const localStorageDir = getEnvVar(c, 'LOCAL_STORAGE_DIR');
+                const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+
+                if (!uploadUrl && localStorageDir) {
+                    console.log(`Attempting Local Storage upload for v${version}...`);
+                    try {
+                        await fs.mkdir(localStorageDir, { recursive: true });
+
+                        const localFileName = type === 'series' && season && episode
+                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                            : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
+                        const localFilePath = path.join(localStorageDir, localFileName);
+
+                        await fs.writeFile(localFilePath, mergedSrtString, 'utf-8');
+
+                        uploadUrl = `${externalUrl}/subtitles/${localFileName}`;
+                        console.log(`Uploaded v${version} to Local Storage: ${uploadUrl}`);
+                        subtitleEntryId += '-local';
+                    } catch (e: any) {
+                        console.warn(`Local Storage write failed (normal on read-only environments like Workers): ${e.message}`);
+                    }
                 }
             }
 
