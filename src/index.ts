@@ -814,20 +814,28 @@ function parseSrtRobust(srtText: string): any[] | null {
     return subtitles;
 }
 function formatSrt(subtitleArray: SRTLine[]): string | null {
-    if (!Array.isArray(subtitleArray)) {
-        console.error("Invalid input to formatSrt: not an array.");
+    if (!Array.isArray(subtitleArray) || subtitleArray.length === 0) {
+        console.error("Invalid input to formatSrt: not an array or empty.");
         return null;
     }
     try {
-        const parser = new SRTParser2();
-        const sanitizedArray = subtitleArray.map((sub, index) => ({
-            ...sub,
-            id: (index + 1).toString()
-        }));
-        return parser.toSrt(sanitizedArray);
+        const parts: string[] = [];
+        for (let i = 0; i < subtitleArray.length; i++) {
+            const sub = subtitleArray[i];
+            if (!sub.startTime || !sub.endTime) {
+                console.warn(`formatSrt: skipping entry ${i} with missing timestamps`);
+                continue;
+            }
+            parts.push(
+                String(i + 1),
+                `${sub.startTime} --> ${sub.endTime}`,
+                sub.text || '',
+                ''
+            );
+        }
+        return parts.join('\n');
     } catch (error: any) {
         console.error('Error formatting SRT:', error.message);
-        console.error('Problematic data for formatSrt:', JSON.stringify(subtitleArray.slice(0, 5)));
         return null;
     }
 }
