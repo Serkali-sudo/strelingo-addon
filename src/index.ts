@@ -620,109 +620,104 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
 function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
     const mainLen = mainSubs.length;
     const transLen = transSubs.length;
-    const mergedSubs: SRTLine[] = [];
 
     const mainStarts = new Int32Array(mainLen);
     const mainEnds = new Int32Array(mainLen);
-    const mainTexts: string[] = new Array(mainLen);
+    const mainClean = new Array<string>(mainLen);
     for (let i = 0; i < mainLen; i++) {
         const s = mainSubs[i];
         mainStarts[i] = s.startTime ? parseTimeToMs(s.startTime) : 0;
         mainEnds[i] = s.endTime ? parseTimeToMs(s.endTime) : 0;
-        mainTexts[i] = s.text;
+        mainClean[i] = sanitizeTextFast(s.text);
     }
 
     const transStarts = new Int32Array(transLen);
     const transEnds = new Int32Array(transLen);
-    const transTexts: string[] = new Array(transLen);
+    const transClean = new Array<string>(transLen);
     for (let i = 0; i < transLen; i++) {
         const s = transSubs[i];
         transStarts[i] = s.startTime ? parseTimeToMs(s.startTime) : 0;
         transEnds[i] = s.endTime ? parseTimeToMs(s.endTime) : 0;
-        transTexts[i] = s.text;
+        transClean[i] = sanitizeTextFast(s.text);
     }
 
     const threshold2 = mergeThresholdMs * 2;
+    const result: SRTLine[] = [];
     let transIndex = 0;
+    let outIdx = 0;
 
     for (let mi = 0; mi < mainLen; mi++) {
-        const mainStart = mainStarts[mi];
-        const mainEnd = mainEnds[mi];
-        if (!mainStart && !mainEnd) continue;
+        const ms = mainStarts[mi];
+        const me = mainEnds[mi];
+        if (!ms && !me) continue;
 
-        let bestMatchIndex = -1;
-        let smallestTimeDiff = 0x7FFFFFFF;
-        let foundMatch = false;
-        const mainEndThreshold = mainEnd + mergeThresholdMs;
+        const flatMain = mainClean[mi];
+        if (!flatMain) continue;
 
-        for (let i = transIndex; i < transLen; i++) {
-            const tStart = transStarts[i];
-            const tEnd = transEnds[i];
-            if (!tStart && !tEnd) continue;
+        let bestIdx = -1;
+        let bestDiff = 0x7FFFFFFF;
+        const meThresh = me + mergeThresholdMs;
 
-            if (tStart > mainEndThreshold) break;
+        for (let ti = transIndex; ti < transLen; ti++) {
+            const ts = transStarts[ti];
+            const te = transEnds[ti];
+            if (!ts && !te) continue;
+            if (ts > meThresh) break;
 
-            const timeDiff = mainStart > tStart ? mainStart - tStart : tStart - mainStart;
+            const diff = ms > ts ? ms - ts : ts - ms;
 
-            if (timeDiff < mergeThresholdMs ||
-                (tStart >= mainStart && tStart < mainEnd) ||
-                (tEnd > mainStart && tEnd <= mainEnd) ||
-                (tStart >= mainStart && tEnd <= mainEnd) ||
-                (tStart < mainStart && tEnd > mainEnd)) {
-                if (timeDiff < smallestTimeDiff) {
-                    smallestTimeDiff = timeDiff;
-                    bestMatchIndex = i;
+            if (diff < mergeThresholdMs ||
+                (ts >= ms && ts < me) ||
+                (te > ms && te <= me) ||
+                (ts >= ms && te <= me) ||
+                (ts < ms && te > me)) {
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestIdx = ti;
                 }
-                foundMatch = true;
             }
 
-            if (tEnd < mainStart - threshold2 && i === transIndex) {
-                transIndex = i + 1;
+            if (te < ms - threshold2 && ti === transIndex) {
+                transIndex = ti + 1;
             }
         }
 
-        const flatMainText = sanitizeTextFast(mainTexts[mi]);
-        if (!flatMainText) continue;
-
+        outIdx++;
         let mergedText: string;
-        if (bestMatchIndex !== -1) {
-            const flatTransText = sanitizeTextFast(transTexts[bestMatchIndex]);
-            mergedText = flatTransText
-                ? ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>')
-                : ('<b>' + flatMainText + '</b>');
+        if (bestIdx !== -1 && transClean[bestIdx]) {
+            mergedText = '<b>' + flatMain + '</b>\n<i>> ' + transClean[bestIdx] + '</i>';
         } else {
-            mergedText = '<b>' + flatMainText + '</b>';
+            mergedText = '<b>' + flatMain + '</b>';
         }
 
-        mergedSubs.push({
-            id: mainSubs[mi].id,
+        result.push({
+            id: outIdx.toString(),
             startTime: mainSubs[mi].startTime,
             endTime: mainSubs[mi].endTime,
             text: mergedText
         });
     }
 
-    console.log(`Merged ${mainLen}+${transLen} subs -> ${mergedSubs.length} entries.`);
-    return mergedSubs;
+    console.log(`Merged ${mainLen}+${transLen} -> ${result.length}`);
+    return result;
 }
 
 // Formats an array of subtitle objects back into SRT text
 function formatSrt(subtitleArray: SRTLine[]): string | null {
-    if (!Array.isArray(subtitleArray)) {
-        console.error("Invalid input to formatSrt: not an array.");
-        return null;
-    }
+    if (!Array.isArray(subtitleArray) || subtitleArray.length === 0) return null;
     try {
-        const parser = new SRTParser2();
-        // Ensure IDs are sequential numbers as strings, as required by srt-parser-2
-        const sanitizedArray = subtitleArray.map((sub, index) => ({
-            ...sub,
-            id: (index + 1).toString()
-        }));
-        return parser.toSrt(sanitizedArray);
+        const parts: string[] = [];
+        for (let i = 0; i < subtitleArray.length; i++) {
+            const sub = subtitleArray[i];
+            parts.push(
+                (i + 1).toString(), '\n',
+                sub.startTime, ' --> ', sub.endTime, '\n',
+                sub.text, '\n\n'
+            );
+        }
+        return parts.join('');
     } catch (error: any) {
         console.error('Error formatting SRT:', error.message);
-        console.error('Problematic data for formatSrt:', JSON.stringify(subtitleArray.slice(0, 5)));
         return null;
     }
 }
