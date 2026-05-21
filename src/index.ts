@@ -704,13 +704,10 @@ function combineSubtitleTracks(
 
         if (!mergedText) continue;
 
-        const startTime = SubtitleConverter.toTimeString(mainSub.startMs);
-        const endTime = SubtitleConverter.toTimeString(mainSub.endMs);
-        console.log(`Cue ${mainSub.id}: startMs=${mainSub.startMs} endMs=${mainSub.endMs} -> startTime=${startTime} endTime=${endTime}`);
         mergedSubs.push({
             id: mainSub.id,
-            startTime,
-            endTime,
+            startTime: SubtitleConverter.toTimeString(mainSub.startMs),
+            endTime: SubtitleConverter.toTimeString(mainSub.endMs),
             text: mergedText,
         });
     }
