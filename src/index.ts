@@ -574,16 +574,9 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
         if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);
 
         const arrayBuffer = await response.arrayBuffer();
-
-        let t0 = performance.now();
         const buffer = Buffer.from(arrayBuffer);
-        let t1 = performance.now();
-        console.log(`[CPU] Buffer.from: ${(t1 - t0).toFixed(2)}ms`);
 
-        t0 = performance.now();
         let subtitleText = await decodeSubtitleBuffer(buffer, languageCode);
-        t1 = performance.now();
-        console.log(`[CPU] decodeSubtitleBuffer: ${(t1 - t0).toFixed(2)}ms`);
         if (!subtitleText) {
             console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
             return null;
@@ -591,10 +584,7 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
 
         if (sourceFormat.toLowerCase() !== 'srt') {
             console.log(`Converting subtitle from ${sourceFormat} to srt.`);
-            t0 = performance.now();
             const convertedSrt = SubtitleConverter.convert(subtitleText, sourceFormat);
-            t1 = performance.now();
-            console.log(`[CPU] SubtitleConverter.convert: ${(t1 - t0).toFixed(2)}ms`);
             if (convertedSrt) {
                 subtitleText = convertedSrt;
             } else {
@@ -1351,34 +1341,20 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
         const mainSubContent = await fetchSubtitleContent(mainUrl, mainFormat, mainLang);
 
         if (!mainSubContent) throw new Error("Failed to fetch main subtitle");
-
-        let t0 = performance.now();
         const mainParsed = parseSrt(mainSubContent);
-        let t1 = performance.now();
         if (!mainParsed) throw new Error("Failed to parse main subtitle");
-        console.log(`[CPU] parseSrt (main): ${(t1 - t0).toFixed(2)}ms`);
 
         const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
 
         if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
-
-        t0 = performance.now();
         const transParsed = parseSrt(transSubContent);
-        t1 = performance.now();
         if (!transParsed) throw new Error("Failed to parse translation subtitle");
-        console.log(`[CPU] parseSrt (trans): ${(t1 - t0).toFixed(2)}ms`);
 
-        t0 = performance.now();
         const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
-        t1 = performance.now();
         if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
-        console.log(`[CPU] mergeSubtitles: ${(t1 - t0).toFixed(2)}ms`);
 
-        t0 = performance.now();
         const mergedSrtString = formatSrt(mergedParsed);
-        t1 = performance.now();
         if (!mergedSrtString) throw new Error("Failed to format merged subtitles");
-        console.log(`[CPU] formatSrt: ${(t1 - t0).toFixed(2)}ms`);
 
         const response = c.body(mergedSrtString, 200, {
             'Content-Type': 'text/srt; charset=utf-8',
@@ -1421,34 +1397,20 @@ app.get('/serve-subtitles.srt', async (c) => {
         const mainSubContent = await fetchSubtitleContent(mainUrl, mainFormat, mainLang);
 
         if (!mainSubContent) throw new Error("Failed to fetch main subtitle");
-
-        let t0 = performance.now();
         const mainParsed = parseSrt(mainSubContent);
-        let t1 = performance.now();
         if (!mainParsed) throw new Error("Failed to parse main subtitle");
-        console.log(`[CPU] parseSrt (main): ${(t1 - t0).toFixed(2)}ms`);
 
         const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
 
         if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
-
-        t0 = performance.now();
         const transParsed = parseSrt(transSubContent);
-        t1 = performance.now();
         if (!transParsed) throw new Error("Failed to parse translation subtitle");
-        console.log(`[CPU] parseSrt (trans): ${(t1 - t0).toFixed(2)}ms`);
 
-        t0 = performance.now();
         const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
-        t1 = performance.now();
         if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
-        console.log(`[CPU] mergeSubtitles: ${(t1 - t0).toFixed(2)}ms`);
 
-        t0 = performance.now();
         const mergedSrtString = formatSrt(mergedParsed);
-        t1 = performance.now();
         if (!mergedSrtString) throw new Error("Failed to format merged subtitles");
-        console.log(`[CPU] formatSrt: ${(t1 - t0).toFixed(2)}ms`);
 
         const response = c.body(mergedSrtString, 200, {
             'Content-Type': 'text/srt; charset=utf-8',
