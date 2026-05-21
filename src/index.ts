@@ -383,26 +383,49 @@ function parseTimeToMs(timeString: string): number {
     return (h * 3600 + m * 60 + s) * 1000 + ms;
 }
 
-const HTML_TAG_RE = /<[^>]+>/g;
-const BRACE_TAG_RE = /\{[^}]*\}/g;
-const NEWLINE_RE = /\r?\n|\r/g;
-const NBSP_RE = /&nbsp;/gi;
-const QUOT_RE = /&quot;/gi;
-const APOS_RE = /&#39;/gi;
-const LT_RE = /&lt;/gi;
-const GT_RE = /&gt;/gi;
-const AMP_RE = /&amp;/gi;
-
 function sanitizeTextFast(text: string): string {
     if (!text) return '';
-    let r = text.replace(HTML_TAG_RE, '').replace(BRACE_TAG_RE, '');
-    r = r.replace(NEWLINE_RE, ' ');
-    r = r.replace(NBSP_RE, ' ').replace(QUOT_RE, '"').replace(APOS_RE, "'").replace(LT_RE, '<').replace(GT_RE, '>').replace(AMP_RE, '&');
-    const len = r.length;
-    let start = 0, end = len;
-    while (start < len && r.charCodeAt(start) <= 32) start++;
-    while (end > start && r.charCodeAt(end - 1) <= 32) end--;
-    return start === 0 && end === len ? r : r.substring(start, end);
+    const len = text.length;
+    const out: string[] = [];
+    let i = 0;
+    while (i < len) {
+        const c = text.charCodeAt(i);
+        if (c === 60) {
+            if (text.charCodeAt(i + 1) === 47 || (text.charCodeAt(i + 1) >= 97 && text.charCodeAt(i + 1) <= 122)) {
+                while (i < len && text.charCodeAt(i) !== 62) i++;
+                i++;
+                continue;
+            }
+            out.push(60);
+            i++;
+        } else if (c === 123) {
+            while (i < len && text.charCodeAt(i) !== 125) i++;
+            i++;
+            continue;
+        } else if (c === 38) {
+            if (text.startsWith("&nbsp;", i)) { out.push(32); i += 6; }
+            else if (text.startsWith("&quot;", i)) { out.push(34); i += 6; }
+            else if (text.startsWith("&#39;", i)) { out.push(39); i += 5; }
+            else if (text.startsWith("&lt;", i)) { out.push(60); i += 4; }
+            else if (text.startsWith("&gt;", i)) { out.push(62); i += 4; }
+            else if (text.startsWith("&amp;", i)) { out.push(38); i += 5; }
+            else { out.push(c); i++; }
+        } else if (c === 13 || c === 10) {
+            out.push(32);
+            if (c === 13 && text.charCodeAt(i + 1) === 10) i++;
+            i++;
+        } else {
+            out.push(c);
+            i++;
+        }
+    }
+    const oLen = out.length;
+    let start = 0, end = oLen;
+    while (start < end && out[start] <= 32) start++;
+    while (end > start && out[end - 1] <= 32) end--;
+    let result = '';
+    for (let j = start; j < end; j++) result += String.fromCharCode(out[j]);
+    return result;
 }
 
 function makeCacheKey(url: string): Request | null {
@@ -623,22 +646,16 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
 
     const mainStarts = new Int32Array(mainLen);
     const mainEnds = new Int32Array(mainLen);
-    const mainClean = new Array<string>(mainLen);
     for (let i = 0; i < mainLen; i++) {
-        const s = mainSubs[i];
-        mainStarts[i] = s.startTime ? parseTimeToMs(s.startTime) : 0;
-        mainEnds[i] = s.endTime ? parseTimeToMs(s.endTime) : 0;
-        mainClean[i] = sanitizeTextFast(s.text);
+        mainStarts[i] = mainSubs[i].startTime ? parseTimeToMs(mainSubs[i].startTime) : 0;
+        mainEnds[i] = mainSubs[i].endTime ? parseTimeToMs(mainSubs[i].endTime) : 0;
     }
 
     const transStarts = new Int32Array(transLen);
     const transEnds = new Int32Array(transLen);
-    const transClean = new Array<string>(transLen);
     for (let i = 0; i < transLen; i++) {
-        const s = transSubs[i];
-        transStarts[i] = s.startTime ? parseTimeToMs(s.startTime) : 0;
-        transEnds[i] = s.endTime ? parseTimeToMs(s.endTime) : 0;
-        transClean[i] = sanitizeTextFast(s.text);
+        transStarts[i] = transSubs[i].startTime ? parseTimeToMs(transSubs[i].startTime) : 0;
+        transEnds[i] = transSubs[i].endTime ? parseTimeToMs(transSubs[i].endTime) : 0;
     }
 
     const threshold2 = mergeThresholdMs * 2;
@@ -650,9 +667,6 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
         const ms = mainStarts[mi];
         const me = mainEnds[mi];
         if (!ms && !me) continue;
-
-        const flatMain = mainClean[mi];
-        if (!flatMain) continue;
 
         let bestIdx = -1;
         let bestDiff = 0x7FFFFFFF;
@@ -682,10 +696,16 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             }
         }
 
+        const flatMain = sanitizeTextFast(mainSubs[mi].text);
+        if (!flatMain) continue;
+
         outIdx++;
         let mergedText: string;
-        if (bestIdx !== -1 && transClean[bestIdx]) {
-            mergedText = '<b>' + flatMain + '</b>\n<i>> ' + transClean[bestIdx] + '</i>';
+        if (bestIdx !== -1) {
+            const flatTrans = sanitizeTextFast(transSubs[bestIdx].text);
+            mergedText = flatTrans
+                ? '<b>' + flatMain + '</b>\n<i>> ' + flatTrans + '</i>'
+                : '<b>' + flatMain + '</b>';
         } else {
             mergedText = '<b>' + flatMain + '</b>';
         }
