@@ -69,19 +69,49 @@ function buildActivityMap(
     stepMs: number
 ): Uint8Array {
     const map = new Uint8Array(cells);
-    for (const s of subs) {
-        if (!s || s.endMs <= s.startMs) continue;
-        const start = Math.max(0, Math.floor(s.startMs / stepMs));
-        const end = Math.min(cells - 1, Math.floor((s.endMs - 1) / stepMs));
-        for (let i = start; i <= end; i++) map[i] = 1;
+    for (let i = 0; i < subs.length; i++) {
+        const s = subs[i];
+        if (s.endMs <= s.startMs) continue;
+        const start = (s.startMs / stepMs) | 0;
+        const end = Math.min(cells - 1, ((s.endMs - 1) / stepMs) | 0);
+        if (start < 0) continue;
+        for (let j = start; j <= end; j++) map[j] = 1;
     }
     return map;
 }
 
 function countActiveCells(map: Uint8Array): number {
     let n = 0;
-    for (let i = 0; i < map.length; i++) if (map[i]) n++;
+    for (let i = 0; i < map.length; i++) n += map[i];
     return n;
+}
+
+function crossCorrelate(
+    mainMap: Uint8Array,
+    transMap: Uint8Array,
+    cells: number,
+    maxLag: number,
+    stepMs: number
+): { bestLag: number; bestScore: number; zeroScore: number } {
+    let bestLag = 0;
+    let bestScore = -1;
+    let zeroScore = 0;
+
+    for (let lag = -maxLag; lag <= maxLag; lag++) {
+        let score = 0;
+        const iStart = lag > 0 ? 0 : -lag;
+        const iEnd = lag > 0 ? cells - lag : cells;
+        for (let i = iStart; i < iEnd; i++) {
+            score += mainMap[i] & transMap[i + lag];
+        }
+        if (lag === 0) zeroScore = score;
+        if (score > bestScore) {
+            bestScore = score;
+            bestLag = lag;
+        }
+    }
+
+    return { bestLag, bestScore, zeroScore };
 }
 
 export function computeGlobalShift(
@@ -104,47 +134,72 @@ export function computeGlobalShift(
     const totalDuration = Math.max(maxMain, maxTrans) + maxShiftMs;
     if (totalDuration <= 0) return 0;
 
-    const cells = Math.ceil(totalDuration / stepMs) + 1;
-    const mainMap = buildActivityMap(mainSubs, cells, stepMs);
-    const transMap = buildActivityMap(transSubs, cells, stepMs);
+    const coarseStep = stepMs * 3;
+    const coarseMaxLag = Math.floor(maxShiftMs / coarseStep);
+    const coarseCells = Math.ceil(totalDuration / coarseStep) + 1;
 
-    const mainActive = countActiveCells(mainMap);
-    const transActive = countActiveCells(transMap);
+    const coarseMain = buildActivityMap(mainSubs, coarseCells, coarseStep);
+    const coarseTrans = buildActivityMap(transSubs, coarseCells, coarseStep);
+
+    const mainActive = countActiveCells(coarseMain);
+    const transActive = countActiveCells(coarseTrans);
     if (mainActive === 0 || transActive === 0) return 0;
 
-    const maxLag = Math.floor(maxShiftMs / stepMs);
-    let bestLag = 0;
-    let bestScore = -1;
-    let zeroScore = 0;
-
-    for (let lag = -maxLag; lag <= maxLag; lag++) {
-        let score = 0;
-        const iStart = Math.max(0, -lag);
-        const iEnd = Math.min(cells, cells - lag);
-        for (let i = iStart; i < iEnd; i++) {
-            if (mainMap[i] && transMap[i + lag]) score++;
-        }
-        if (lag === 0) zeroScore = score;
-        if (score > bestScore) {
-            bestScore = score;
-            bestLag = lag;
-        }
-    }
+    const coarseResult = crossCorrelate(coarseMain, coarseTrans, coarseCells, coarseMaxLag, coarseStep);
 
     const maxPossible = Math.min(mainActive, transActive);
-    if (bestScore < minConfidence * maxPossible) return 0;
-    if (bestLag !== 0 && bestScore < zeroScore * 1.05) return 0;
+    if (coarseResult.bestScore < minConfidence * maxPossible) return 0;
+    if (coarseResult.bestLag !== 0 && coarseResult.bestScore < coarseResult.zeroScore * 1.05) return 0;
 
-    return -bestLag * stepMs;
+    const coarseOffsetMs = -coarseResult.bestLag * coarseStep;
+
+    const refineRangeMs = coarseStep * 3;
+    const fineCells = Math.ceil((2 * refineRangeMs) / stepMs) + 1;
+    const fineMaxMain = refineRangeMs;
+    const offsetMain = mainSubs.filter(s => s.startMs >= 0 && s.startMs < refineRangeMs * 2);
+    const offsetTrans = transSubs.map(s => ({
+        ...s,
+        startMs: s.startMs + coarseOffsetMs,
+        endMs: s.endMs + coarseOffsetMs,
+    })).filter(s => s.startMs >= -refineRangeMs && s.startMs < refineRangeMs * 2);
+
+    if (offsetMain.length < 3 || offsetTrans.length < 3) return coarseOffsetMs;
+
+    const fineMain = buildActivityMap(offsetMain, fineCells, stepMs);
+    const fineTrans = buildActivityMap(offsetTrans, fineCells, stepMs);
+
+    const fineMaxLag = Math.floor(refineRangeMs / stepMs);
+    const fineResult = crossCorrelate(fineMain, fineTrans, fineCells, fineMaxLag, stepMs);
+
+    const fineActive = countActiveCells(fineMain);
+    const fineTransActive = countActiveCells(fineTrans);
+    if (fineActive === 0 || fineTransActive === 0) return coarseOffsetMs;
+
+    const fineMaxPossible = Math.min(fineActive, fineTransActive);
+    if (fineResult.bestScore < minConfidence * fineMaxPossible) return coarseOffsetMs;
+
+    const fineOffsetMs = -fineResult.bestLag * stepMs;
+    return coarseOffsetMs + fineOffsetMs;
 }
 
-export function shiftTimings(subs: TimedCue[], offsetMs: number): TimedCue[] {
-    if (!offsetMs) return subs;
-    return subs.map(s => ({
-        ...s,
-        startMs: s.startMs + offsetMs,
-        endMs: s.endMs + offsetMs,
-    }));
+function bisectStart(arr: TimedCue[], ms: number): number {
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (arr[mid].startMs < ms) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+function bisectEnd(arr: TimedCue[], ms: number): number {
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (arr[mid].startMs <= ms) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
 }
 
 function findDriftAnchors(
@@ -154,7 +209,8 @@ function findDriftAnchors(
 ): Array<[number, number]> {
     const anchors: Array<[number, number]> = [];
     let j = 0;
-    for (const m of mainSubs) {
+    for (let i = 0; i < mainSubs.length; i++) {
+        const m = mainSubs[i];
         while (j < transSubs.length && transSubs[j].endMs < m.startMs - anchorThresholdMs) j++;
         let bestK = -1;
         let bestD = Infinity;
@@ -189,7 +245,9 @@ export function computeAffineDrift(
     if (anchors.length < minAnchors) return null;
 
     let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-    for (const [x, y] of anchors) {
+    for (let i = 0; i < anchors.length; i++) {
+        const x = anchors[i][0];
+        const y = anchors[i][1];
         sumX += x;
         sumY += y;
         sumXY += x * y;
@@ -205,15 +263,6 @@ export function computeAffineDrift(
     if (a < 0.85 || a > 1.15) return null;
 
     return { scale: a, offset: b, anchors: n };
-}
-
-export function applyDriftCorrection(subs: TimedCue[], mapping: DriftCorrection): TimedCue[] {
-    const { scale, offset } = mapping;
-    return subs.map(s => ({
-        ...s,
-        startMs: Math.round((s.startMs - offset) / scale),
-        endMs: Math.round((s.endMs - offset) / scale),
-    }));
 }
 
 export function computeSegmentOffsets(
@@ -246,14 +295,17 @@ export function computeSegmentOffsets(
     const anchors: SegmentAnchor[] = [];
     for (let winStart = 0; winStart < total; winStart += stepMs) {
         const winEnd = winStart + windowMs;
-        const mainSlice = mainSubs.filter(s => s.startMs >= winStart && s.startMs < winEnd);
-        const transSlice = transSubs.filter(
-            s => s.startMs >= winStart - maxSegmentShiftMs &&
-                 s.startMs < winEnd + maxSegmentShiftMs
-        );
-        if (mainSlice.length < minCuesPerWindow || transSlice.length < minCuesPerWindow) {
+        const mainLo = bisectStart(mainSubs, winStart);
+        const mainHi = bisectEnd(mainSubs, winEnd);
+        const transLo = bisectStart(transSubs, winStart - maxSegmentShiftMs);
+        const transHi = bisectEnd(transSubs, winEnd + maxSegmentShiftMs);
+
+        if (mainHi - mainLo < minCuesPerWindow || transHi - transLo < minCuesPerWindow) {
             continue;
         }
+
+        const mainSlice = mainSubs.slice(mainLo, mainHi);
+        const transSlice = transSubs.slice(transLo, transHi);
 
         const localShift = computeGlobalShift(mainSlice, transSlice, {
             maxShiftMs: maxSegmentShiftMs,
@@ -267,40 +319,38 @@ export function computeSegmentOffsets(
     return anchors;
 }
 
-export function interpolateSegmentShifts(
-    subs: TimedCue[],
-    anchors: SegmentAnchor[]
-): TimedCue[] {
-    if (!anchors || anchors.length === 0) return subs;
-    const sorted = [...anchors].sort((a, b) => a.centerMs - b.centerMs);
-
-    function shiftAtTime(t: number): number {
-        if (t <= sorted[0].centerMs) return sorted[0].shiftMs;
-        if (t >= sorted[sorted.length - 1].centerMs) return sorted[sorted.length - 1].shiftMs;
-        for (let i = 0; i < sorted.length - 1; i++) {
-            const a = sorted[i];
-            const b = sorted[i + 1];
-            if (t >= a.centerMs && t <= b.centerMs) {
-                const ratio = (t - a.centerMs) / (b.centerMs - a.centerMs);
-                return Math.round(a.shiftMs + ratio * (b.shiftMs - a.shiftMs));
-            }
-        }
-        return 0;
+function bisectAnchors(sorted: SegmentAnchor[], t: number): number {
+    let lo = 0, hi = sorted.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        if (sorted[mid].centerMs <= t) lo = mid;
+        else hi = mid - 1;
     }
+    return lo;
+}
 
-    return subs.map(s => {
-        const o = shiftAtTime(s.startMs);
-        return { ...s, startMs: s.startMs + o, endMs: s.endMs + o };
-    });
+function computeShiftAtTime(sorted: SegmentAnchor[], t: number): number {
+    if (sorted.length === 0) return 0;
+    if (sorted.length === 1) return sorted[0].shiftMs;
+    if (t <= sorted[0].centerMs) return sorted[0].shiftMs;
+    if (t >= sorted[sorted.length - 1].centerMs) return sorted[sorted.length - 1].shiftMs;
+
+    const idx = bisectAnchors(sorted, t);
+    if (idx >= sorted.length - 1) return sorted[sorted.length - 1].shiftMs;
+
+    const a = sorted[idx];
+    const b = sorted[idx + 1];
+    const ratio = (t - a.centerMs) / (b.centerMs - a.centerMs);
+    return Math.round(a.shiftMs + ratio * (b.shiftMs - a.shiftMs));
 }
 
 export function computeJaccardOverlap(m: TimedCue, t: TimedCue): number {
-    const overlapStart = Math.max(m.startMs, t.startMs);
-    const overlapEnd = Math.min(m.endMs, t.endMs);
+    const overlapStart = m.startMs > t.startMs ? m.startMs : t.startMs;
+    const overlapEnd = m.endMs < t.endMs ? m.endMs : t.endMs;
     const overlap = overlapEnd - overlapStart;
     if (overlap <= 0) return 0;
-    const unionStart = Math.min(m.startMs, t.startMs);
-    const unionEnd = Math.max(m.endMs, t.endMs);
+    const unionStart = m.startMs < t.startMs ? m.startMs : t.startMs;
+    const unionEnd = m.endMs > t.endMs ? m.endMs : t.endMs;
     const union = unionEnd - unionStart;
     if (union <= 0) return 0;
     return overlap / union;
@@ -354,7 +404,8 @@ export function assignOverlaps(
     }
 
     pairs.sort((a, b) => b.score - a.score);
-    for (const p of pairs) {
+    for (let i = 0; i < pairs.length; i++) {
+        const p = pairs[i];
         if (usedMain.has(p.mi) || usedTrans.has(p.ti)) continue;
         usedMain.add(p.mi);
         usedTrans.add(p.ti);
@@ -363,12 +414,13 @@ export function assignOverlaps(
 
     if (!allowManyTranslations) return matches;
 
-    for (const [mi, picked] of matches) {
-        if (picked.length >= maxTranslationsPerMain) continue;
+    matches.forEach((picked, mi) => {
+        if (picked.length >= maxTranslationsPerMain) return;
         const m = mainSubs[mi];
         const anchor = picked[0];
 
-        for (const dir of [1, -1]) {
+        for (let di = 0; di < 2; di++) {
+            const dir = di === 0 ? 1 : -1;
             let ti = anchor + dir;
             while (
                 ti >= 0 &&
@@ -385,7 +437,7 @@ export function assignOverlaps(
             }
         }
         picked.sort((a, b) => a - b);
-    }
+    });
 
     return matches;
 }
@@ -396,15 +448,24 @@ export function synchronizeTracks(
     opts: SyncOptions = {}
 ): SyncResult {
     const o = mergeOptions(opts);
-    let trans = [...transSubs];
     let globalShiftMs = 0;
     let drift: DriftCorrection | null = null;
     let segmentAnchors: SegmentAnchor[] = [];
 
+    const trans = transSubs.map(s => ({
+        id: s.id,
+        text: s.text,
+        startMs: s.startMs,
+        endMs: s.endMs,
+    }));
+
     if (o.enableGlobalShift && trans.length > 0 && mainSubs.length > 0) {
         globalShiftMs = computeGlobalShift(mainSubs, trans);
         if (globalShiftMs !== 0) {
-            trans = shiftTimings(trans, globalShiftMs);
+            for (let i = 0; i < trans.length; i++) {
+                trans[i].startMs += globalShiftMs;
+                trans[i].endMs += globalShiftMs;
+            }
             o.log(`Alignment: applied global shift ${globalShiftMs}ms`);
         }
     }
@@ -412,7 +473,11 @@ export function synchronizeTracks(
     if (o.enableDriftCorrection && trans.length >= 8 && mainSubs.length >= 8) {
         drift = computeAffineDrift(mainSubs, trans);
         if (drift && Math.abs(drift.scale - 1) > 0.001) {
-            trans = applyDriftCorrection(trans, drift);
+            const { scale, offset } = drift;
+            for (let i = 0; i < trans.length; i++) {
+                trans[i].startMs = Math.round((trans[i].startMs - offset) / scale);
+                trans[i].endMs = Math.round((trans[i].endMs - offset) / scale);
+            }
             o.log(
                 `Alignment: applied drift correction scale=${drift.scale.toFixed(5)} ` +
                 `offset=${drift.offset.toFixed(0)} from ${drift.anchors} anchors`
@@ -425,18 +490,21 @@ export function synchronizeTracks(
     if (o.enableSegmentOffsets && trans.length >= 20 && mainSubs.length >= 20) {
         segmentAnchors = computeSegmentOffsets(mainSubs, trans);
         if (segmentAnchors.length >= 2) {
-            const range = segmentAnchors.reduce(
-                (acc, a) => ({
-                    min: Math.min(acc.min, a.shiftMs),
-                    max: Math.max(acc.max, a.shiftMs),
-                }),
-                { min: Infinity, max: -Infinity }
-            );
-            if (range.max - range.min >= 500) {
-                trans = interpolateSegmentShifts(trans, segmentAnchors);
+            const sorted = [...segmentAnchors].sort((a, b) => a.centerMs - b.centerMs);
+            let minMs = Infinity, maxMs = -Infinity;
+            for (let i = 0; i < sorted.length; i++) {
+                if (sorted[i].shiftMs < minMs) minMs = sorted[i].shiftMs;
+                if (sorted[i].shiftMs > maxMs) maxMs = sorted[i].shiftMs;
+            }
+            if (maxMs - minMs >= 500) {
+                for (let i = 0; i < trans.length; i++) {
+                    const shift = computeShiftAtTime(sorted, trans[i].startMs);
+                    trans[i].startMs += shift;
+                    trans[i].endMs += shift;
+                }
                 o.log(
                     `Alignment: applied ${segmentAnchors.length} segment anchors ` +
-                    `(spread ${range.min}..${range.max} ms)`
+                    `(spread ${minMs}..${maxMs} ms)`
                 );
             } else {
                 segmentAnchors = [];

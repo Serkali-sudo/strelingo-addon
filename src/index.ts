@@ -367,18 +367,20 @@ function stripJsonExtension(str: string | undefined): string {
 }
 
 // Functionally perfectly matches sanitize-html behavior for extracting just the raw text
+const NAMED_ENTITIES: Record<string, string> = {
+    '&nbsp;': ' ', '&quot;': '"', '&#39;': "'", '&apos;': "'",
+    '&lt;': '<', '&gt;': '>', '&amp;': '&',
+};
+const ENTITY_RE = /&(?:nbsp|quot|#39|apos|lt|gt|amp);/gi;
+const DEC_CHAR_REF_RE = /&#(\d+);/g;
+const HEX_CHAR_REF_RE = /&#x([0-9a-fA-F]+);/g;
+
 function sanitizeText(text: string): string {
     if (!text) return '';
     text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/&nbsp;/gi, ' ')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, "'")
-        .replace(/&apos;/gi, "'")
-        .replace(/&lt;/gi, '<')
-        .replace(/&gt;/gi, '>')
-        .replace(/&amp;/gi, '&')
-        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
-        .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
+    text = text.replace(ENTITY_RE, m => NAMED_ENTITIES[m.toLowerCase()] || m);
+    text = text.replace(DEC_CHAR_REF_RE, (_, code) => String.fromCharCode(parseInt(code, 10)));
+    text = text.replace(HEX_CHAR_REF_RE, (_, code) => String.fromCharCode(parseInt(code, 16)));
     return text.trim();
 }
 
@@ -405,9 +407,12 @@ function escapeSrtMarkup(text: string): string {
         .replace(/>/g, '&gt;');
 }
 
+const TIME_MS_RE = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/;
+const AD_FILTER_RE = /OpenSubtitles\.org|OpenSubtitles\.com|osdb\.link|Advertise your/;
+
 function parseTimeToMs(timeString: string): number {
     if (!timeString) return 0;
-    const match = timeString.match(/(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/);
+    const match = timeString.match(TIME_MS_RE);
     if (!match) return 0;
     const hours = parseInt(match[1], 10);
     const minutes = parseInt(match[2], 10);
@@ -630,21 +635,23 @@ function combineSubtitleTracks(
     } = opts;
 
     const mainTimed: TimedCue[] = [];
-    for (const s of mainSubs || []) {
+    for (let i = 0; i < mainSubs.length; i++) {
+        const s = mainSubs[i];
         if (!s || !s.startTime || !s.endTime) continue;
         const startMs = parseTimeToMs(s.startTime);
         const endMs = parseTimeToMs(s.endTime);
         if (endMs <= startMs) continue;
-        mainTimed.push({ ...s, startMs, endMs });
+        mainTimed.push({ id: s.id, text: s.text, startMs, endMs });
     }
 
     const transTimed: TimedCue[] = [];
-    for (const s of transSubs || []) {
+    for (let i = 0; i < transSubs.length; i++) {
+        const s = transSubs[i];
         if (!s || !s.startTime || !s.endTime) continue;
         const startMs = parseTimeToMs(s.startTime);
         const endMs = parseTimeToMs(s.endTime);
         if (endMs <= startMs) continue;
-        transTimed.push({ ...s, startMs, endMs });
+        transTimed.push({ id: s.id, text: s.text, startMs, endMs });
     }
 
     const alignment = synchronizeTracks(mainTimed, transTimed, {
@@ -911,20 +918,16 @@ function parseSrt(srtText: string): SRTLine[] | null {
     }
     try {
         if (srtText.charCodeAt(0) === 0xFEFF) {
-            console.log("Found BOM in parseSrt, removing it.");
             srtText = srtText.substring(1);
         }
-        srtText = srtText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        srtText = srtText.replace(/\r\n?/g, '\n');
 
         const trimmed = srtText.trimStart();
         if (trimmed.startsWith('WEBVTT')) {
             srtText = normalizeWebVttToSrt(srtText);
+        } else {
+            srtText = srtText.replace(/(\d{1,2}:\d{2}:\d{2})\.(\d{1,3})/g, '$1,$2');
         }
-
-        srtText = srtText.replace(
-            /(\d{1,2}:\d{2}:\d{2})\.(\d{1,3})/g,
-            '$1,$2'
-        );
 
         const parser = new SRTParser2();
         let subtitles = parser.fromSrt(srtText);
@@ -940,10 +943,9 @@ function parseSrt(srtText: string): SRTLine[] | null {
             }
         }
 
-        const adKeywords = ["OpenSubtitles.org", "OpenSubtitles.com", "osdb.link", "Advertise your"];
         const originalCount = subtitles.length;
         subtitles = subtitles.filter(sub =>
-            !adKeywords.some(keyword => sub.text && sub.text.includes(keyword))
+            sub.text && !AD_FILTER_RE.test(sub.text)
         );
 
         if (originalCount > subtitles.length) {

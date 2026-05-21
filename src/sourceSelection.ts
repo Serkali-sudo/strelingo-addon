@@ -25,8 +25,8 @@ function filterCandidatesForLanguage(
     languageId: string
 ): SubtitleCandidate[] {
     if (!Array.isArray(allSubtitles) || !languageId) return [];
-    const aliases = getLanguageAliases(languageId);
-    return allSubtitles.filter(s => s && aliases.includes(s.lang));
+    const aliases = new Set(getLanguageAliases(languageId));
+    return allSubtitles.filter(s => s && aliases.has(s.lang));
 }
 
 function scoreCandidateQuality(sub: SubtitleCandidate): number {
@@ -44,12 +44,8 @@ function rankCandidatesForLanguage(
 ): SubtitleCandidate[] {
     const list = filterCandidatesForLanguage(allSubtitles, languageId);
     return list
-        .map((sub, idx) => ({ sub, idx }))
-        .sort((a, b) => {
-            const ds = scoreCandidateQuality(b.sub) - scoreCandidateQuality(a.sub);
-            if (ds !== 0) return ds;
-            return a.idx - b.idx;
-        })
+        .map((sub, idx) => ({ sub, idx, score: scoreCandidateQuality(sub) }))
+        .sort((a, b) => b.score - a.score || a.idx - b.idx)
         .map(x => x.sub);
 }
 
