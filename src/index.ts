@@ -605,26 +605,25 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     const mergedSubs: SRTLine[] = [];
     let transIndex = 0;
 
-    for (const mainSub of mainSubs) {
-        let foundMatch = false;
-        let bestMatchIndex = -1;
-        let smallestTimeDiff = Infinity;
-
+    const matchIndices: (number | -1)[] = [];
+    for (let m = 0; m < mainSubs.length; m++) {
+        const mainSub = mainSubs[m];
         if (!mainSub || !mainSub.startTime || !mainSub.endTime) {
             console.warn("Skipping invalid main subtitle entry:", mainSub);
+            matchIndices.push(-1);
             continue;
         }
 
         const mainStartTime = parseTimeToMs(mainSub.startTime);
         const mainEndTime = parseTimeToMs(mainSub.endTime);
 
+        let foundMatch = false;
+        let bestMatchIndex = -1;
+        let smallestTimeDiff = Infinity;
+
         for (let i = transIndex; i < transSubs.length; i++) {
             const transSub = transSubs[i];
-
-            if (!transSub || !transSub.startTime || !transSub.endTime) {
-                console.warn("Skipping invalid translation subtitle entry:", transSub);
-                continue;
-            }
+            if (!transSub || !transSub.startTime || !transSub.endTime) continue;
 
             const transStartTime = parseTimeToMs(transSub.startTime);
             const transEndTime = parseTimeToMs(transSub.endTime);
@@ -652,26 +651,78 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             }
         }
 
-        const cleanMainText = sanitizeText(mainSub.text);
-        const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
+        matchIndices.push(bestMatchIndex);
+    }
 
-        let mergedText = flatMainText;
-        if (bestMatchIndex !== -1) {
-            const bestTransSub = transSubs[bestMatchIndex];
-            const cleanTransText = sanitizeText(bestTransSub.text);
-            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
-            if (flatTransText) {
-                mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
+    let i = 0;
+    while (i < mainSubs.length) {
+        const transIdx = matchIndices[i];
+        if (transIdx === -1) {
+            const mainSub = mainSubs[i];
+            const cleanMainText = sanitizeText(mainSub.text);
+            const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
+            if (flatMainText) {
+                mergedSubs.push({ ...mainSub, text: '<b>' + flatMainText + '</b>' });
             }
+            i++;
+            continue;
         }
 
-        if (!mergedText) continue;
+        if (transIdx === -1) {
+            i++;
+            continue;
+        }
 
-        mergedSubs.push({
-            ...mainSub,
-            text: mergedText
-        });
+        let groupEnd = i;
+        while (groupEnd + 1 < mainSubs.length && matchIndices[groupEnd + 1] === transIdx) {
+            groupEnd++;
+        }
+
+        if (groupEnd > i) {
+            const combinedMainTexts: string[] = [];
+            for (let j = i; j <= groupEnd; j++) {
+                const text = sanitizeText(mainSubs[j].text).replace(/\r?\n|\r/g, ' ').trim();
+                if (text) combinedMainTexts.push(text);
+            }
+            const combinedMainText = combinedMainTexts.join(' ');
+
+            const firstMain = mainSubs[i];
+            const lastMain = mainSubs[groupEnd];
+            const cleanTransText = sanitizeText(transSubs[transIdx].text);
+            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
+
+            let mergedText = '<b>' + combinedMainText + '</b>';
+            if (flatTransText) {
+                mergedText += '\n<i>> ' + flatTransText + '</i>';
+            }
+
+            if (mergedText.trim()) {
+                mergedSubs.push({
+                    ...firstMain,
+                    startTime: firstMain.startTime,
+                    endTime: lastMain.endTime,
+                    text: mergedText.trim()
+                });
+            }
+            i = groupEnd + 1;
+        } else {
+            const mainSub = mainSubs[i];
+            const cleanMainText = sanitizeText(mainSub.text).replace(/\r?\n|\r/g, ' ').trim();
+            const cleanTransText = sanitizeText(transSubs[transIdx].text);
+            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
+
+            let mergedText = '<b>' + cleanMainText + '</b>';
+            if (flatTransText) {
+                mergedText += '\n<i>> ' + flatTransText + '</i>';
+            }
+
+            if (mergedText.trim()) {
+                mergedSubs.push({ ...mainSub, text: mergedText.trim() });
+            }
+            i++;
+        }
     }
+
     console.log(`Finished merging. Result has ${mergedSubs.length} entries.`);
     return mergedSubs;
 }
