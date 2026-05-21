@@ -535,19 +535,6 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
         return null;
     }
 
-    langSubs.sort((a, b) => {
-        const aCodeIndex = codesToMatch.indexOf(a.lang);
-        const bCodeIndex = codesToMatch.indexOf(b.lang);
-
-        if (aCodeIndex !== bCodeIndex) {
-            return aCodeIndex - bCodeIndex;
-        }
-
-        const aG = parseInt(a.g) || 0;
-        const bG = parseInt(b.g) || 0;
-        return bG - aG;
-    });
-
     const subtitleList = langSubs.map((sub) => {
         return {
             id: sub.id,
