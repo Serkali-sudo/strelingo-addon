@@ -388,8 +388,6 @@ function parseTimeToMs(timeString: string): number {
     return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
 }
 
-const globalCaches = typeof caches !== 'undefined' ? caches : null;
-
 function makeCacheKey(url: string): Request | null {
     try {
         const normalizedUrl = new URL(url);
@@ -401,9 +399,9 @@ function makeCacheKey(url: string): Request | null {
 }
 
 async function getCachedResponse(cacheKey: Request | null): Promise<Response | null> {
-    if (!cacheKey || !globalCaches?.default) return null;
+    if (!cacheKey || typeof caches === 'undefined') return null;
     try {
-        return await globalCaches.default.match(cacheKey);
+        return await caches.default.match(cacheKey);
     } catch (e: any) {
         console.warn("Cache read error:", e.message);
         return null;
@@ -411,9 +409,9 @@ async function getCachedResponse(cacheKey: Request | null): Promise<Response | n
 }
 
 function putCachedResponse(cacheKey: Request | null, response: Response, waitUntil?: (p: Promise<any>) => void): void {
-    if (!cacheKey || !globalCaches?.default) return;
+    if (!cacheKey || typeof caches === 'undefined') return;
     try {
-        const putPromise = globalCaches.default.put(cacheKey, response.clone());
+        const putPromise = caches.default.put(cacheKey, response.clone());
         if (waitUntil) {
             waitUntil(putPromise);
         } else {
