@@ -375,17 +375,34 @@ function sanitizeText(text: string): string {
 }
 
 function parseTimeToMs(timeString: string): number {
-    if (!timeString || !/\d{2}:\d{2}:\d{2},\d{3}/.test(timeString)) {
-        console.error(`Invalid time format encountered: ${timeString}`);
-        return 0;
-    }
-    const parts = timeString.split(':');
-    const secondsParts = parts[2].split(',');
-    const hours = parseInt(parts[0], 10);
-    const minutes = parseInt(parts[1], 10);
-    const seconds = parseInt(secondsParts[0], 10);
-    const milliseconds = parseInt(secondsParts[1], 10);
-    return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
+    if (!timeString || timeString.length < 12) return 0;
+    const h = (timeString.charCodeAt(0) - 48) * 10 + (timeString.charCodeAt(1) - 48);
+    const m = (timeString.charCodeAt(3) - 48) * 10 + (timeString.charCodeAt(4) - 48);
+    const s = (timeString.charCodeAt(6) - 48) * 10 + (timeString.charCodeAt(7) - 48);
+    const ms = (timeString.charCodeAt(9) - 48) * 100 + (timeString.charCodeAt(10) - 48) * 10 + (timeString.charCodeAt(11) - 48);
+    return (h * 3600 + m * 60 + s) * 1000 + ms;
+}
+
+const HTML_TAG_RE = /<[^>]+>/g;
+const BRACE_TAG_RE = /\{[^}]*\}/g;
+const NEWLINE_RE = /\r?\n|\r/g;
+const NBSP_RE = /&nbsp;/gi;
+const QUOT_RE = /&quot;/gi;
+const APOS_RE = /&#39;/gi;
+const LT_RE = /&lt;/gi;
+const GT_RE = /&gt;/gi;
+const AMP_RE = /&amp;/gi;
+
+function sanitizeTextFast(text: string): string {
+    if (!text) return '';
+    let r = text.replace(HTML_TAG_RE, '').replace(BRACE_TAG_RE, '');
+    r = r.replace(NEWLINE_RE, ' ');
+    r = r.replace(NBSP_RE, ' ').replace(QUOT_RE, '"').replace(APOS_RE, "'").replace(LT_RE, '<').replace(GT_RE, '>').replace(AMP_RE, '&');
+    const len = r.length;
+    let start = 0, end = len;
+    while (start < len && r.charCodeAt(start) <= 32) start++;
+    while (end > start && r.charCodeAt(end - 1) <= 32) end--;
+    return start === 0 && end === len ? r : r.substring(start, end);
 }
 
 function makeCacheKey(url: string): Request | null {
@@ -601,78 +618,91 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
 
 // Merges two arrays of parsed subtitles based on time
 function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
-    console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
+    const mainLen = mainSubs.length;
+    const transLen = transSubs.length;
     const mergedSubs: SRTLine[] = [];
+
+    const mainStarts = new Int32Array(mainLen);
+    const mainEnds = new Int32Array(mainLen);
+    const mainTexts: string[] = new Array(mainLen);
+    for (let i = 0; i < mainLen; i++) {
+        const s = mainSubs[i];
+        mainStarts[i] = s.startTime ? parseTimeToMs(s.startTime) : 0;
+        mainEnds[i] = s.endTime ? parseTimeToMs(s.endTime) : 0;
+        mainTexts[i] = s.text;
+    }
+
+    const transStarts = new Int32Array(transLen);
+    const transEnds = new Int32Array(transLen);
+    const transTexts: string[] = new Array(transLen);
+    for (let i = 0; i < transLen; i++) {
+        const s = transSubs[i];
+        transStarts[i] = s.startTime ? parseTimeToMs(s.startTime) : 0;
+        transEnds[i] = s.endTime ? parseTimeToMs(s.endTime) : 0;
+        transTexts[i] = s.text;
+    }
+
+    const threshold2 = mergeThresholdMs * 2;
     let transIndex = 0;
 
-    for (const mainSub of mainSubs) {
-        let foundMatch = false;
+    for (let mi = 0; mi < mainLen; mi++) {
+        const mainStart = mainStarts[mi];
+        const mainEnd = mainEnds[mi];
+        if (!mainStart && !mainEnd) continue;
+
         let bestMatchIndex = -1;
-        let smallestTimeDiff = Infinity;
+        let smallestTimeDiff = 0x7FFFFFFF;
+        let foundMatch = false;
+        const mainEndThreshold = mainEnd + mergeThresholdMs;
 
-        if (!mainSub || !mainSub.startTime || !mainSub.endTime) {
-            console.warn("Skipping invalid main subtitle entry:", mainSub);
-            continue;
-        }
+        for (let i = transIndex; i < transLen; i++) {
+            const tStart = transStarts[i];
+            const tEnd = transEnds[i];
+            if (!tStart && !tEnd) continue;
 
-        const mainStartTime = parseTimeToMs(mainSub.startTime);
-        const mainEndTime = parseTimeToMs(mainSub.endTime);
+            if (tStart > mainEndThreshold) break;
 
-        for (let i = transIndex; i < transSubs.length; i++) {
-            const transSub = transSubs[i];
+            const timeDiff = mainStart > tStart ? mainStart - tStart : tStart - mainStart;
 
-            if (!transSub || !transSub.startTime || !transSub.endTime) {
-                console.warn("Skipping invalid translation subtitle entry:", transSub);
-                continue;
-            }
-
-            const transStartTime = parseTimeToMs(transSub.startTime);
-            const transEndTime = parseTimeToMs(transSub.endTime);
-
-            const startsOverlap = (transStartTime >= mainStartTime && transStartTime < mainEndTime);
-            const endsOverlap = (transEndTime > mainStartTime && transEndTime <= mainEndTime);
-            const isWithin = (transStartTime >= mainStartTime && transEndTime <= mainEndTime);
-            const contains = (transStartTime < mainStartTime && transEndTime > mainEndTime);
-            const timeDiff = Math.abs(mainStartTime - transStartTime);
-
-            if (startsOverlap || endsOverlap || isWithin || contains || timeDiff < mergeThresholdMs) {
+            if (timeDiff < mergeThresholdMs ||
+                (tStart >= mainStart && tStart < mainEnd) ||
+                (tEnd > mainStart && tEnd <= mainEnd) ||
+                (tStart >= mainStart && tEnd <= mainEnd) ||
+                (tStart < mainStart && tEnd > mainEnd)) {
                 if (timeDiff < smallestTimeDiff) {
                     smallestTimeDiff = timeDiff;
                     bestMatchIndex = i;
                 }
                 foundMatch = true;
-            } else if (foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
-                break;
-            } else if (!foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
-                break;
             }
 
-            if (transEndTime < mainStartTime - mergeThresholdMs * 2 && i === transIndex) {
+            if (tEnd < mainStart - threshold2 && i === transIndex) {
                 transIndex = i + 1;
             }
         }
 
-        const cleanMainText = sanitizeText(mainSub.text);
-        const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
+        const flatMainText = sanitizeTextFast(mainTexts[mi]);
+        if (!flatMainText) continue;
 
-        let mergedText = flatMainText;
+        let mergedText: string;
         if (bestMatchIndex !== -1) {
-            const bestTransSub = transSubs[bestMatchIndex];
-            const cleanTransText = sanitizeText(bestTransSub.text);
-            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
-            if (flatTransText) {
-                mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
-            }
+            const flatTransText = sanitizeTextFast(transTexts[bestMatchIndex]);
+            mergedText = flatTransText
+                ? ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>')
+                : ('<b>' + flatMainText + '</b>');
+        } else {
+            mergedText = '<b>' + flatMainText + '</b>';
         }
 
-        if (!mergedText) continue;
-
         mergedSubs.push({
-            ...mainSub,
+            id: mainSubs[mi].id,
+            startTime: mainSubs[mi].startTime,
+            endTime: mainSubs[mi].endTime,
             text: mergedText
         });
     }
-    console.log(`Finished merging. Result has ${mergedSubs.length} entries.`);
+
+    console.log(`Merged ${mainLen}+${transLen} subs -> ${mergedSubs.length} entries.`);
     return mergedSubs;
 }
 
