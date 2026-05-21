@@ -388,6 +388,42 @@ function parseTimeToMs(timeString: string): number {
     return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
 }
 
+const globalCaches = typeof caches !== 'undefined' ? caches : null;
+
+function makeCacheKey(url: string): Request | null {
+    try {
+        const normalizedUrl = new URL(url);
+        normalizedUrl.pathname = normalizedUrl.pathname.replace(/\.json(?=[\/]|$)/gi, '');
+        return new Request(normalizedUrl.toString(), { method: 'GET' });
+    } catch {
+        return null;
+    }
+}
+
+async function getCachedResponse(cacheKey: Request | null): Promise<Response | null> {
+    if (!cacheKey || !globalCaches?.default) return null;
+    try {
+        return await globalCaches.default.match(cacheKey);
+    } catch (e: any) {
+        console.warn("Cache read error:", e.message);
+        return null;
+    }
+}
+
+function putCachedResponse(cacheKey: Request | null, response: Response, waitUntil?: (p: Promise<any>) => void): void {
+    if (!cacheKey || !globalCaches?.default) return;
+    try {
+        const putPromise = globalCaches.default.put(cacheKey, response.clone());
+        if (waitUntil) {
+            waitUntil(putPromise);
+        } else {
+            putPromise.catch((e: any) => console.warn("Cache write error:", e.message));
+        }
+    } catch (e: any) {
+        console.warn("Cache write error:", e.message);
+    }
+}
+
 // Fetch all subtitles using standard web fetch (axios-free)
 async function fetchAllSubtitles(
     baseSearchParams: { imdbid: string; season?: string; episode?: string },
@@ -922,6 +958,13 @@ async function handleSubtitlesRequest(c: any) {
 
     console.log('Strelingo Subtitle request:', { type, id, extraParam, configParam });
 
+    const cacheKey = configParam ? makeCacheKey(c.req.url) : null;
+    const cachedSearch = await getCachedResponse(cacheKey);
+    if (cachedSearch) {
+        console.log("Subtitle search cache hit! Serving from edge cache.");
+        return cachedSearch;
+    }
+
     let browserLanguageCode = 'eng';
     const acceptLang = c.req.header('accept-language');
     if (acceptLang) {
@@ -948,7 +991,9 @@ async function handleSubtitlesRequest(c: any) {
 
     if (mainLang === transLang) {
         console.log(`Error: Main language (${mainLang}) and Translation language (${transLang}) cannot be the same. Aborting.`);
-        return c.json({ subtitles: [], cacheMaxAge: 3600 });
+        const res = c.json({ subtitles: [], cacheMaxAge: 3600 }, 200, { 'Cache-Control': 'public, max-age=3600' });
+        putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+        return res;
     }
 
     let imdbId = id;
@@ -966,7 +1011,9 @@ async function handleSubtitlesRequest(c: any) {
 
     if (!imdbId || !imdbId.startsWith('tt')) {
         console.log('No valid IMDB ID provided');
-        return c.json({ subtitles: [] });
+        const res = c.json({ subtitles: [] }, 200, { 'Cache-Control': 'public, max-age=60' });
+        putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+        return res;
     }
 
     const baseSearchParams: any = {
@@ -1016,7 +1063,9 @@ async function handleSubtitlesRequest(c: any) {
 
         if (!allSubtitles) {
             console.log('Failed to fetch subtitles.');
-            return c.json({ subtitles: [], cacheMaxAge: 60 });
+            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
+            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            return res;
         }
 
         console.log(`Filtering for main language: ${mainLang}`);
@@ -1027,12 +1076,16 @@ async function handleSubtitlesRequest(c: any) {
 
         if (!mainSubInfoList || mainSubInfoList.length === 0) {
             console.log(`No main language (${mainLang}) subtitles found.`);
-            return c.json({ subtitles: [], cacheMaxAge: 60 });
+            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
+            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            return res;
         }
 
         if (!transSubInfoList || transSubInfoList.length === 0) {
             console.warn(`No translation language (${transLang}) subtitles found.`);
-            return c.json({ subtitles: [], cacheMaxAge: 60 });
+            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
+            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            return res;
         }
 
         let mainParsed: SRTLine[] | null = null;
@@ -1062,7 +1115,9 @@ async function handleSubtitlesRequest(c: any) {
 
         if (!mainParsed || !selectedMainSubInfo) {
             console.error("Failed to fetch and parse any of the available main subtitles. Cannot proceed.");
-            return c.json({ subtitles: [], cacheMaxAge: 60 });
+            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
+            putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+            return res;
         }
 
         const finalSubtitles = [];
@@ -1123,7 +1178,10 @@ async function handleSubtitlesRequest(c: any) {
                 };
 
                 const encodedData = encodeBase64UrlSafe(JSON.stringify(paramsObj));
-                uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/subtitles.srt`;
+                const srtFileName = type === 'series' && season && episode
+                    ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                    : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
+                uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
                 subtitleEntryId += '-direct';
             }
 
@@ -1223,35 +1281,35 @@ async function handleSubtitlesRequest(c: any) {
             console.warn("Processed translation candidates, but none resulted in a usable subtitle file. Returning empty.");
         }
 
-        return c.json({
+        const successResponse = c.json({
             subtitles: finalSubtitles,
             cacheMaxAge: 6 * 3600,
             staleRevalidate: 24 * 3600
+        }, 200, {
+            'Cache-Control': 'public, max-age=21600, s-maxage=21600, stale-while-revalidate=86400',
         });
+        putCachedResponse(cacheKey, successResponse, c.executionCtx?.waitUntil);
+        return successResponse;
 
     } catch (e: any) {
         console.error('Error in subtitle handler:', e.message);
-        return c.json({ subtitles: [], cacheMaxAge: 60 });
+        const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
+        putCachedResponse(cacheKey, res, c.executionCtx?.waitUntil);
+        return res;
     }
 }
 
-app.get('/serve-subtitles/:encodedData/subtitles.srt', async (c) => {
+app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
     const encodedData = c.req.param('encodedData');
     if (!encodedData) {
         return c.text('Missing encoded parameter payload', 400);
     }
 
-    const globalCaches = typeof caches !== 'undefined' ? caches : null;
-    if (globalCaches && globalCaches.default) {
-        try {
-            const cachedResponse = await globalCaches.default.match(c.req.raw);
-            if (cachedResponse) {
-                console.log("Subtitle Cache Hit! Serving immediately from Cloudflare Edge Cache.");
-                return cachedResponse;
-            }
-        } catch (cacheErr: any) {
-            console.warn("Failed to check Cloudflare Cache:", cacheErr.message);
-        }
+    const cacheKey = makeCacheKey(c.req.url);
+    const cachedResponse = await getCachedResponse(cacheKey);
+    if (cachedResponse) {
+        console.log("Subtitle Cache Hit! Serving from edge cache.");
+        return cachedResponse;
     }
 
     try {
@@ -1295,13 +1353,7 @@ app.get('/serve-subtitles/:encodedData/subtitles.srt', async (c) => {
             'Cache-Control': 'public, max-age=86400'
         });
 
-        if (globalCaches && globalCaches.default && c.executionCtx?.waitUntil) {
-            try {
-                c.executionCtx.waitUntil(globalCaches.default.put(c.req.raw, response.clone()));
-            } catch (cachePutErr: any) {
-                console.warn("Failed to write to Cloudflare Cache:", cachePutErr.message);
-            }
-        }
+        putCachedResponse(cacheKey, response, c.executionCtx?.waitUntil);
 
         return response;
 
@@ -1321,6 +1373,13 @@ app.get('/serve-subtitles.srt', async (c) => {
 
     if (!mainUrl || !transUrl) {
         return c.text('Missing required subtitle URLs', 400);
+    }
+
+    const cacheKey = makeCacheKey(c.req.url);
+    const cachedResponse = await getCachedResponse(cacheKey);
+    if (cachedResponse) {
+        console.log("Subtitle query cache hit! Serving from edge cache.");
+        return cachedResponse;
     }
 
     try {
@@ -1344,11 +1403,15 @@ app.get('/serve-subtitles.srt', async (c) => {
         const mergedSrtString = formatSrt(mergedParsed);
         if (!mergedSrtString) throw new Error("Failed to format merged subtitles");
 
-        return c.body(mergedSrtString, 200, {
+        const response = c.body(mergedSrtString, 200, {
             'Content-Type': 'text/srt; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
             'Cache-Control': 'public, max-age=86400'
         });
+
+        putCachedResponse(cacheKey, response, c.executionCtx?.waitUntil);
+
+        return response;
 
     } catch (e: any) {
         console.error(`Direct subtitle serving failed: ${e.message}`);
