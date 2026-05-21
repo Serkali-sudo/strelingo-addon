@@ -424,6 +424,45 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
     }
 }
 
+function tokenizeFilename(filename: string): string[] {
+    const name = filename.replace(/\.[^.]+$/, '').toLowerCase();
+    return name.split(/[.\-_\s]+/).filter(t => t.length > 1);
+}
+
+function scoreFilenameMatch(subTokens: string[], videoTokens: string[]): number {
+    const videoSet = new Set(videoTokens);
+    let score = 0;
+    for (const token of subTokens) {
+        if (videoSet.has(token)) score++;
+    }
+    return score;
+}
+
+async function fetchSubtitleFilename(url: string): Promise<string | null> {
+    try {
+        const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+        const disposition = response.headers.get('content-disposition');
+        if (!disposition) return null;
+        const match = disposition.match(/filename="?([^";]+)"?/i);
+        return match ? match[1] : null;
+    } catch {
+        return null;
+    }
+}
+
+async function sortByFilenameMatch(subList: SubtitleInfo[], videoFilename: string): Promise<SubtitleInfo[]> {
+    const videoTokens = tokenizeFilename(videoFilename);
+    const scored = await Promise.all(
+        subList.map(async (sub) => {
+            const subFilename = await fetchSubtitleFilename(sub.url);
+            const subTokens = subFilename ? tokenizeFilename(subFilename) : [];
+            return { sub, score: scoreFilenameMatch(subTokens, videoTokens) };
+        })
+    );
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map(s => s.sub);
+}
+
 // Fetch all subtitles using standard web fetch (axios-free)
 async function fetchAllSubtitles(
     baseSearchParams: { imdbid: string; season?: string; episode?: string },
@@ -1111,6 +1150,15 @@ async function handleSubtitlesRequest(c: any) {
 
         console.log(`Filtering for translation language: ${transLang}`);
         let transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
+
+        if (videoParams.filename && mainSubInfoList && mainSubInfoList.length > 1) {
+            console.log(`Sorting main subtitles by filename match with: ${videoParams.filename}`);
+            mainSubInfoList = await sortByFilenameMatch(mainSubInfoList, videoParams.filename);
+        }
+        if (videoParams.filename && transSubInfoList && transSubInfoList.length > 1) {
+            console.log(`Sorting translation subtitles by filename match with: ${videoParams.filename}`);
+            transSubInfoList = await sortByFilenameMatch(transSubInfoList, videoParams.filename);
+        }
 
         if (!mainSubInfoList || mainSubInfoList.length === 0) {
             console.log(`No main language (${mainLang}) subtitles found.`);
