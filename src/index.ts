@@ -455,6 +455,7 @@ async function sortByFilenameMatch(subList: SubtitleInfo[], videoFilename: strin
     const scored = await Promise.all(
         subList.map(async (sub) => {
             const subFilename = await fetchSubtitleFilename(sub.url);
+            if (subFilename) console.log(`Subtitle ID=${sub.id} filename: ${subFilename}`);
             const subTokens = subFilename ? tokenizeFilename(subFilename) : [];
             return { sub, score: scoreFilenameMatch(subTokens, videoTokens) };
         })
