@@ -1153,15 +1153,6 @@ async function handleSubtitlesRequest(c: any) {
         console.log(`Filtering for translation language: ${transLang}`);
         let transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
 
-        if (videoParams.filename && mainSubInfoList && mainSubInfoList.length > 1) {
-            console.log(`Sorting main subtitles by filename match with: ${videoParams.filename}`);
-            mainSubInfoList = await sortByFilenameMatch(mainSubInfoList, videoParams.filename);
-        }
-        if (videoParams.filename && transSubInfoList && transSubInfoList.length > 1) {
-            console.log(`Sorting translation subtitles by filename match with: ${videoParams.filename}`);
-            transSubInfoList = await sortByFilenameMatch(transSubInfoList, videoParams.filename);
-        }
-
         if (!mainSubInfoList || mainSubInfoList.length === 0) {
             console.log(`No main language (${mainLang}) subtitles found.`);
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
@@ -1175,6 +1166,16 @@ async function handleSubtitlesRequest(c: any) {
             putCachedResponse(cacheKey, res, c.executionCtx);
             return res;
         }
+
+        if (videoParams.filename) {
+            console.log(`Sorting main subtitles by filename match with: ${videoParams.filename}`);
+            mainSubInfoList = await sortByFilenameMatch(mainSubInfoList, videoParams.filename);
+        }
+        if (videoParams.filename) {
+            console.log(`Sorting translation subtitles by filename match with: ${videoParams.filename}`);
+            transSubInfoList = await sortByFilenameMatch(transSubInfoList, videoParams.filename);
+        }
+
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
         let selectedMainSubInfo: SubtitleInfo | null = null;
