@@ -631,50 +631,86 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
 function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
     console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
     const mergedSubs: SRTLine[] = [];
-    let transIndex = 0;
 
+    // Pre-parse timestamps to milliseconds to avoid parsing in nested loops (huge CPU saving)
+    const parsedMain = mainSubs.map((sub, index) => {
+        if (!sub || !sub.startTime || !sub.endTime) return null;
+        return {
+            sub,
+            startMs: parseTimeToMs(sub.startTime),
+            endMs: parseTimeToMs(sub.endTime),
+            index
+        };
+    });
+
+    const parsedTrans = transSubs.map((sub, index) => {
+        if (!sub || !sub.startTime || !sub.endTime) return null;
+        return {
+            sub,
+            startMs: parseTimeToMs(sub.startTime),
+            endMs: parseTimeToMs(sub.endTime),
+            index
+        };
+    });
+
+    let transIndex = 0;
     const matchIndices: (number | -1)[] = [];
-    for (let m = 0; m < mainSubs.length; m++) {
-        const mainSub = mainSubs[m];
-        if (!mainSub || !mainSub.startTime || !mainSub.endTime) {
-            console.warn("Skipping invalid main subtitle entry:", mainSub);
+
+    for (let m = 0; m < parsedMain.length; m++) {
+        const main = parsedMain[m];
+        if (!main) {
+            console.warn("Skipping invalid main subtitle entry at index:", m);
             matchIndices.push(-1);
             continue;
         }
 
-        const mainStartTime = parseTimeToMs(mainSub.startTime);
-        const mainEndTime = parseTimeToMs(mainSub.endTime);
-
         let foundMatch = false;
         let bestMatchIndex = -1;
-        let smallestTimeDiff = Infinity;
+        let bestScore = -Infinity;
 
-        for (let i = transIndex; i < transSubs.length; i++) {
-            const transSub = transSubs[i];
-            if (!transSub || !transSub.startTime || !transSub.endTime) continue;
+        for (let i = transIndex; i < parsedTrans.length; i++) {
+            const trans = parsedTrans[i];
+            if (!trans) continue;
 
-            const transStartTime = parseTimeToMs(transSub.startTime);
-            const transEndTime = parseTimeToMs(transSub.endTime);
+            // Check if there is a temporal overlap
+            const overlap = trans.startMs < main.endMs && trans.endMs > main.startMs;
 
-            const startsOverlap = (transStartTime >= mainStartTime && transStartTime < mainEndTime);
-            const endsOverlap = (transEndTime > mainStartTime && transEndTime <= mainEndTime);
-            const isWithin = (transStartTime >= mainStartTime && transEndTime <= mainEndTime);
-            const contains = (transStartTime < mainStartTime && transEndTime > mainEndTime);
-            const timeDiff = Math.abs(mainStartTime - transStartTime);
+            let score = -Infinity;
+            let isCandidate = false;
 
-            if (startsOverlap || endsOverlap || isWithin || contains || timeDiff < mergeThresholdMs) {
-                if (timeDiff < smallestTimeDiff) {
-                    smallestTimeDiff = timeDiff;
-                    bestMatchIndex = i;
+            if (overlap) {
+                // Higher overlap duration = better match
+                const overlapDuration = Math.min(main.endMs, trans.endMs) - Math.max(main.startMs, trans.startMs);
+                score = 10000 + overlapDuration;
+                isCandidate = true;
+            } else {
+                // Check if they are within the threshold gap
+                const distance = trans.startMs >= main.endMs
+                    ? (trans.startMs - main.endMs)
+                    : (main.startMs - trans.endMs);
+
+                if (distance < mergeThresholdMs) {
+                    // Smaller gap = better match
+                    score = mergeThresholdMs - distance;
+                    isCandidate = true;
+                }
+            }
+
+            if (isCandidate) {
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatchIndex = trans.index;
                 }
                 foundMatch = true;
-            } else if (foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
+            } else if (foundMatch && trans.startMs > main.endMs + mergeThresholdMs) {
                 break;
-            } else if (!foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
+            } else if (!foundMatch && trans.startMs > main.endMs + mergeThresholdMs) {
                 break;
             }
 
-            if (transEndTime < mainStartTime - mergeThresholdMs * 2 && i === transIndex) {
+            // Slide the window forward since chronologically sorted subtitle arrays mean
+            // any translation ending before (main.startMs - mergeThresholdMs) will never match any future main subtitle.
+            if (trans.endMs < main.startMs - mergeThresholdMs && i === transIndex) {
                 transIndex = i + 1;
             }
         }
@@ -692,11 +728,6 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             if (flatMainText) {
                 mergedSubs.push({ ...mainSub, text: '<b>' + flatMainText + '</b>' });
             }
-            i++;
-            continue;
-        }
-
-        if (transIdx === -1) {
             i++;
             continue;
         }
