@@ -371,6 +371,25 @@ function sanitizeText(text: string): string {
         .replace(/&lt;/gi, '<')
         .replace(/&gt;/gi, '>')
         .replace(/&amp;/gi, '&');
+
+    // Remove SDH bracketed captions e.g. [grunts], [music playing]
+    text = text.replace(/\[[^\]]*\]/g, '');
+
+    // Remove SDH parenthesized captions e.g. (screaming), (chuckles)
+    text = text.replace(/\([^)]*\)/g, '');
+
+    // Remove uppercase speaker labels at the start of lines e.g. "MAN:", "JOHN:", "WOMAN 1:"
+    text = text.replace(/^[A-Z][A-Z0-9\s#_\-']{0,20}:\s*/gm, '');
+
+    // Remove SDH musical note symbols commonly used in captions
+    text = text.replace(/[♪♫#]/g, '');
+
+    // Clean up empty lines and extra spaces within each line
+    text = text.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .join('\n');
+
     return text.trim();
 }
 
