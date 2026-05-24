@@ -424,46 +424,6 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
     }
 }
 
-function tokenizeFilename(filename: string): string[] {
-    const name = filename.replace(/\.[^.]+$/, '').toLowerCase();
-    return name.split(/[.\-_\s]+/).filter(t => t.length > 1);
-}
-
-function scoreFilenameMatch(subTokens: string[], videoTokens: string[]): number {
-    const videoSet = new Set(videoTokens);
-    let score = 0;
-    for (const token of subTokens) {
-        if (videoSet.has(token)) score++;
-    }
-    return score;
-}
-
-async function fetchSubtitleFilename(url: string): Promise<string | null> {
-    try {
-        const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
-        const disposition = response.headers.get('content-disposition');
-        if (!disposition) return null;
-        const match = disposition.match(/filename="?([^";]+)"?/i);
-        return match ? match[1] : null;
-    } catch {
-        return null;
-    }
-}
-
-async function sortByFilenameMatch(subList: SubtitleInfo[], videoFilename: string): Promise<SubtitleInfo[]> {
-    const videoTokens = tokenizeFilename(videoFilename);
-    const scored = await Promise.all(
-        subList.map(async (sub) => {
-            const subFilename = await fetchSubtitleFilename(sub.url);
-            const subTokens = subFilename ? tokenizeFilename(subFilename) : [];
-            const score = scoreFilenameMatch(subTokens, videoTokens);
-            if (subFilename) console.log(`Subtitle ID=${sub.id} filename: ${subFilename} score: ${score}`);
-            return { sub, score };
-        })
-    );
-    scored.sort((a, b) => b.score - a.score);
-    return scored.map(s => s.sub);
-}
 
 // Fetch all subtitles using standard web fetch (axios-free)
 async function fetchAllSubtitles(
@@ -1130,63 +1090,12 @@ async function handleSubtitlesRequest(c: any) {
             return res;
         }
 
-        if (videoParams.filename) {
-            console.log(`Sorting main subtitles by filename match with: ${videoParams.filename}`);
-            mainSubInfoList = await sortByFilenameMatch(mainSubInfoList, videoParams.filename);
-        }
-        if (videoParams.filename) {
-            console.log(`Sorting translation subtitles by filename match with: ${videoParams.filename}`);
-            transSubInfoList = await sortByFilenameMatch(transSubInfoList, videoParams.filename);
-        }
-
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
-        let selectedMainSubInfo: SubtitleInfo | null = null;
-        let mainParsed: SRTLine[] | null = null;
-
-        if (directServingEnabled) {
-            selectedMainSubInfo = mainSubInfoList[0];
-            console.log(`Direct serving: selected main subtitle ID=${selectedMainSubInfo.id}, g=${selectedMainSubInfo.g}`);
-        } else {
-            for (const mainSubInfo of mainSubInfoList) {
-                console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, g=${mainSubInfo.g}`);
-                const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang);
-
-                if (!mainSubContent) {
-                    console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
-                    continue;
-                }
-
-                console.log("Parsing main subtitle content...");
-                const parsed = parseSrt(mainSubContent);
-                if (!parsed) {
-                    console.warn(`Failed to parse content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
-                    continue;
-                }
-
-                mainParsed = parsed;
-                selectedMainSubInfo = mainSubInfo;
-                console.log(`Successfully processed main subtitle (ID: ${selectedMainSubInfo.id}). Proceeding with translations.`);
-                break;
-            }
-        }
-
-        if (!selectedMainSubInfo) {
-            console.error("Failed to fetch and parse any of the available main subtitles. Cannot proceed.");
-            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, c.executionCtx);
-            return res;
-        }
-
-        if (!directServingEnabled && !mainParsed) {
-            console.error("Failed to parse any of the available main subtitles. Cannot proceed.");
-            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, c.executionCtx);
-            return res;
-        }
 
         const finalSubtitles = [];
         const usedTransUrls = new Set();
+        let mainIdx = 0;
 
         for (const transSubInfo of transSubInfoList) {
             if (finalSubtitles.length >= 4) break;
@@ -1194,6 +1103,68 @@ async function handleSubtitlesRequest(c: any) {
             usedTransUrls.add(transSubInfo.url);
 
             const version = finalSubtitles.length + 1;
+
+            // Pick a different main subtitle for each variation, cycling through the list
+            let selectedMainSubInfo: SubtitleInfo | null = null;
+            let mainParsed: SRTLine[] | null = null;
+
+            if (directServingEnabled) {
+                // For direct serving, just pick the next main (no fetch needed yet)
+                if (mainIdx < mainSubInfoList.length) {
+                    selectedMainSubInfo = mainSubInfoList[mainIdx];
+                    mainIdx++;
+                } else {
+                    // Exhausted unique mains — reuse the first one
+                    selectedMainSubInfo = mainSubInfoList[0];
+                }
+                console.log(`v${version}: Direct serving with main ID=${selectedMainSubInfo.id}, trans ID=${transSubInfo.id}`);
+            } else {
+                // Try main candidates starting from mainIdx until one parses successfully
+                let found = false;
+                while (mainIdx < mainSubInfoList.length) {
+                    const candidate = mainSubInfoList[mainIdx];
+                    mainIdx++;
+                    console.log(`v${version}: Trying main subtitle ID=${candidate.id}, g=${candidate.g}`);
+
+                    const mainSubContent = await fetchSubtitleContent(candidate.url, candidate.format, candidate.lang);
+                    if (!mainSubContent) {
+                        console.warn(`Failed to fetch content for main sub ID ${candidate.id}. Trying next.`);
+                        continue;
+                    }
+
+                    const parsed = parseSrt(mainSubContent);
+                    if (!parsed) {
+                        console.warn(`Failed to parse content for main sub ID ${candidate.id}. Trying next.`);
+                        continue;
+                    }
+
+                    selectedMainSubInfo = candidate;
+                    mainParsed = parsed;
+                    found = true;
+                    console.log(`v${version}: Using main subtitle ID=${candidate.id}`);
+                    break;
+                }
+
+                // If we exhausted the list, fall back to re-fetching the first parseable main
+                if (!found) {
+                    for (const candidate of mainSubInfoList) {
+                        const mainSubContent = await fetchSubtitleContent(candidate.url, candidate.format, candidate.lang);
+                        if (!mainSubContent) continue;
+                        const parsed = parseSrt(mainSubContent);
+                        if (!parsed) continue;
+                        selectedMainSubInfo = candidate;
+                        mainParsed = parsed;
+                        console.log(`v${version}: Fell back to main subtitle ID=${candidate.id}`);
+                        break;
+                    }
+                }
+            }
+
+            if (!selectedMainSubInfo) {
+                console.warn(`v${version}: No usable main subtitle found. Skipping.`);
+                continue;
+            }
+
             console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
             let uploadUrl: string | null = null;
@@ -1233,7 +1204,7 @@ async function handleSubtitlesRequest(c: any) {
                 }
 
                 console.log(`Merging main with translation v${version}...`);
-                const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
+                const mergedParsed = mergeSubtitles([...mainParsed!], transParsed);
                 if (!mergedParsed || mergedParsed.length === 0) {
                     console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
                     continue;
