@@ -632,85 +632,94 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
     const mergedSubs: SRTLine[] = [];
 
-    // Pre-parse timestamps to milliseconds to avoid parsing in nested loops (huge CPU saving)
-    const parsedMain = mainSubs.map((sub, index) => {
-        if (!sub || !sub.startTime || !sub.endTime) return null;
-        return {
-            sub,
-            startMs: parseTimeToMs(sub.startTime),
-            endMs: parseTimeToMs(sub.endTime),
-            index
-        };
-    });
+    // Pre-parse timestamps into flat arrays — avoids repeated regex parsing in nested loops
+    // without the GC pressure of creating wrapper objects
+    const mStarts: number[] = new Array(mainSubs.length);
+    const mEnds: number[] = new Array(mainSubs.length);
+    const mValid: boolean[] = new Array(mainSubs.length);
+    for (let m = 0; m < mainSubs.length; m++) {
+        const sub = mainSubs[m];
+        if (!sub || !sub.startTime || !sub.endTime) {
+            mValid[m] = false;
+        } else {
+            mStarts[m] = parseTimeToMs(sub.startTime);
+            mEnds[m] = parseTimeToMs(sub.endTime);
+            mValid[m] = true;
+        }
+    }
 
-    const parsedTrans = transSubs.map((sub, index) => {
-        if (!sub || !sub.startTime || !sub.endTime) return null;
-        return {
-            sub,
-            startMs: parseTimeToMs(sub.startTime),
-            endMs: parseTimeToMs(sub.endTime),
-            index
-        };
-    });
+    const tStarts: number[] = new Array(transSubs.length);
+    const tEnds: number[] = new Array(transSubs.length);
+    const tValid: boolean[] = new Array(transSubs.length);
+    for (let t = 0; t < transSubs.length; t++) {
+        const sub = transSubs[t];
+        if (!sub || !sub.startTime || !sub.endTime) {
+            tValid[t] = false;
+        } else {
+            tStarts[t] = parseTimeToMs(sub.startTime);
+            tEnds[t] = parseTimeToMs(sub.endTime);
+            tValid[t] = true;
+        }
+    }
 
     let transIndex = 0;
     const matchIndices: (number | -1)[] = [];
 
-    for (let m = 0; m < parsedMain.length; m++) {
-        const main = parsedMain[m];
-        if (!main) {
+    for (let m = 0; m < mainSubs.length; m++) {
+        if (!mValid[m]) {
             console.warn("Skipping invalid main subtitle entry at index:", m);
             matchIndices.push(-1);
             continue;
         }
 
+        const mainStart = mStarts[m];
+        const mainEnd = mEnds[m];
+
         let foundMatch = false;
         let bestMatchIndex = -1;
         let bestScore = -Infinity;
 
-        for (let i = transIndex; i < parsedTrans.length; i++) {
-            const trans = parsedTrans[i];
-            if (!trans) continue;
+        for (let i = transIndex; i < transSubs.length; i++) {
+            if (!tValid[i]) continue;
 
-            // Check if there is a temporal overlap
-            const overlap = trans.startMs < main.endMs && trans.endMs > main.startMs;
+            const tStart = tStarts[i];
+            const tEnd = tEnds[i];
 
-            let score = -Infinity;
+            // Check temporal overlap: two intervals overlap iff one starts before the other ends
+            const overlap = tStart < mainEnd && tEnd > mainStart;
+
+            let score: number;
             let isCandidate = false;
 
             if (overlap) {
-                // Higher overlap duration = better match
-                const overlapDuration = Math.min(main.endMs, trans.endMs) - Math.max(main.startMs, trans.startMs);
+                // Prefer the match with the most overlap duration
+                const overlapDuration = (mainEnd < tEnd ? mainEnd : tEnd) - (mainStart > tStart ? mainStart : tStart);
                 score = 10000 + overlapDuration;
                 isCandidate = true;
             } else {
-                // Check if they are within the threshold gap
-                const distance = trans.startMs >= main.endMs
-                    ? (trans.startMs - main.endMs)
-                    : (main.startMs - trans.endMs);
+                // Check proximity within threshold
+                const distance = tStart >= mainEnd ? (tStart - mainEnd) : (mainStart - tEnd);
 
                 if (distance < mergeThresholdMs) {
-                    // Smaller gap = better match
                     score = mergeThresholdMs - distance;
                     isCandidate = true;
+                } else {
+                    score = -Infinity;
                 }
             }
 
             if (isCandidate) {
                 if (score > bestScore) {
                     bestScore = score;
-                    bestMatchIndex = trans.index;
+                    bestMatchIndex = i;
                 }
                 foundMatch = true;
-            } else if (foundMatch && trans.startMs > main.endMs + mergeThresholdMs) {
-                break;
-            } else if (!foundMatch && trans.startMs > main.endMs + mergeThresholdMs) {
+            } else if (tStart > mainEnd + mergeThresholdMs) {
                 break;
             }
 
-            // Slide the window forward since chronologically sorted subtitle arrays mean
-            // any translation ending before (main.startMs - mergeThresholdMs) will never match any future main subtitle.
-            if (trans.endMs < main.startMs - mergeThresholdMs && i === transIndex) {
+            // Advance sliding window past translations that can never match future main subs
+            if (tEnd < mainStart - mergeThresholdMs && i === transIndex) {
                 transIndex = i + 1;
             }
         }
