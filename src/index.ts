@@ -1092,49 +1092,68 @@ async function handleSubtitlesRequest(c: any) {
 
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
-        const MAX_VARIATIONS = 6;
 
-        // Generate (main, trans) pairs — prioritize main variety for different sync timings
-        const pairs: { main: SubtitleInfo; trans: SubtitleInfo }[] = [];
-        // First pass: one pair per main, cycling through translations
-        for (let m = 0; m < mainSubInfoList.length; m++) {
-            pairs.push({ main: mainSubInfoList[m], trans: transSubInfoList[m % transSubInfoList.length] });
-        }
-        // Second pass: fill remaining combinations
-        for (let t = 0; t < transSubInfoList.length; t++) {
-            for (let m = 0; m < mainSubInfoList.length; m++) {
-                pairs.push({ main: mainSubInfoList[m], trans: transSubInfoList[t] });
+        // Deduplicate translation URLs upfront
+        const uniqueTransSubs: SubtitleInfo[] = [];
+        const seenTransUrls = new Set<string>();
+        for (const t of transSubInfoList) {
+            if (!seenTransUrls.has(t.url)) {
+                seenTransUrls.add(t.url);
+                uniqueTransSubs.push(t);
             }
         }
 
+        // Total variations = min(4, max(mainCount, transCount)), cycling both lists
+        const mainCount = mainSubInfoList.length;
+        const transCount = uniqueTransSubs.length;
+        const targetCount = Math.min(4, Math.max(mainCount, transCount));
+        console.log(`Generating up to ${targetCount} variations from ${mainCount} main and ${transCount} translation subs.`);
+
+        // Cache for parsed main subs (avoid re-fetching when cycling)
+        const mainParsedCache = new Map<number, { info: SubtitleInfo; parsed: SRTLine[] } | null>();
+
+        async function getMainParsed(idx: number): Promise<{ info: SubtitleInfo; parsed: SRTLine[] } | null> {
+            if (mainParsedCache.has(idx)) return mainParsedCache.get(idx)!;
+            const candidate = mainSubInfoList[idx];
+            const content = await fetchSubtitleContent(candidate.url, candidate.format, candidate.lang);
+            if (!content) {
+                console.warn(`Failed to fetch main sub ID ${candidate.id}.`);
+                mainParsedCache.set(idx, null);
+                return null;
+            }
+            const parsed = parseSrt(content);
+            if (!parsed) {
+                console.warn(`Failed to parse main sub ID ${candidate.id}.`);
+                mainParsedCache.set(idx, null);
+                return null;
+            }
+            const result = { info: candidate, parsed };
+            mainParsedCache.set(idx, result);
+            return result;
+        }
+
         const finalSubtitles = [];
-        const usedPairKeys = new Set<string>();
-        const parsedMainCache = new Map<string, SRTLine[]>();
 
-        for (const pair of pairs) {
-            if (finalSubtitles.length >= MAX_VARIATIONS) break;
-
-            const pairKey = `${pair.main.url}|${pair.trans.url}`;
-            if (usedPairKeys.has(pairKey)) continue;
-            usedPairKeys.add(pairKey);
-
+        for (let i = 0; i < targetCount && finalSubtitles.length < 4; i++) {
+            const mainCycleIdx = i % mainCount;
+            const transCycleIdx = i % transCount;
+            const mainSubInfo = mainSubInfoList[mainCycleIdx];
+            const transSubInfo = uniqueTransSubs[transCycleIdx];
             const version = finalSubtitles.length + 1;
-            const selectedMainSubInfo = pair.main;
-            const transSubInfo = pair.trans;
 
-            console.log(`v${version}: main ID=${selectedMainSubInfo.id}, trans ID=${transSubInfo.id}`);
+            console.log(`v${version}: pairing main[${mainCycleIdx}] ID=${mainSubInfo.id} with trans[${transCycleIdx}] ID=${transSubInfo.id}`);
 
             let uploadUrl: string | null = null;
-            let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${transSubInfo.id}`;
+            let subtitleEntryId = `merged-${mainSubInfo.id}-${transSubInfo.id}`;
 
             if (directServingEnabled) {
                 console.log(`Direct serving enabled! Generating edge-serving URL for v${version}...`);
                 const workerUrl = `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
 
                 const paramsObj = {
-                    mainUrl: selectedMainSubInfo.url,
-                    mainFormat: selectedMainSubInfo.format || 'srt',
-                    mainLang: selectedMainSubInfo.lang || mainLang || 'eng',
+                    mainUrl: mainSubInfo.url,
+                    mainFormat: mainSubInfo.format || 'srt',
+                    mainLang: mainSubInfo.lang || mainLang || 'eng',
                     transUrl: transSubInfo.url,
                     transFormat: transSubInfo.format || 'srt',
                     transLang: transSubInfo.lang || transLang || 'eng'
@@ -1147,21 +1166,10 @@ async function handleSubtitlesRequest(c: any) {
                 uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
                 subtitleEntryId += '-direct';
             } else {
-                // Get or cache parsed main subtitle
-                let mainParsed = parsedMainCache.get(selectedMainSubInfo.url);
-                if (!mainParsed) {
-                    const mainSubContent = await fetchSubtitleContent(selectedMainSubInfo.url, selectedMainSubInfo.format, selectedMainSubInfo.lang);
-                    if (!mainSubContent) {
-                        console.warn(`v${version}: Failed to fetch main sub ID ${selectedMainSubInfo.id}. Skipping pair.`);
-                        continue;
-                    }
-                    const parsed = parseSrt(mainSubContent);
-                    if (!parsed) {
-                        console.warn(`v${version}: Failed to parse main sub ID ${selectedMainSubInfo.id}. Skipping pair.`);
-                        continue;
-                    }
-                    parsedMainCache.set(selectedMainSubInfo.url, parsed);
-                    mainParsed = parsed;
+                const mainData = await getMainParsed(mainCycleIdx);
+                if (!mainData) {
+                    console.warn(`v${version}: Main sub ID ${mainSubInfo.id} unusable. Skipping.`);
+                    continue;
                 }
 
                 const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
@@ -1178,7 +1186,7 @@ async function handleSubtitlesRequest(c: any) {
                 }
 
                 console.log(`Merging main with translation v${version}...`);
-                const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
+                const mergedParsed = mergeSubtitles([...mainData.parsed], transParsed);
                 if (!mergedParsed || mergedParsed.length === 0) {
                     console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
                     continue;
