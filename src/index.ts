@@ -780,12 +780,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     let transIndex = 0;
     let mismatchesCount = 0;
 
-    // Track matching pairs to prevent duplicate matching of the same translation subtitle
-    const mainMatches = new Array<number>(mainSubs.length).fill(-1);
-    const transToMain = new Map<number, { mainIndex: number; score: number }>();
-
-    for (let mainIndex = 0; mainIndex < mainSubs.length; mainIndex++) {
-        const mainSub = mainSubs[mainIndex];
+    for (const mainSub of mainSubs) {
         let foundMatch = false;
         let bestMatchIndex = -1;
         let bestMatchScore = -Infinity;
@@ -832,6 +827,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
                 let emojiBoost = 0;
                 let properNounBoost = 0;
                 let featuresBoost = 0;
+                let lengthScore = 0;
 
                 const transClean = sanitizeText(transSub.text);
 
@@ -891,7 +887,19 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
                     featuresBoost += 300;
                 }
 
-                const totalScore = baseScore + numberBoost + emojiBoost + properNounBoost + featuresBoost;
+                // 5. Length ratio similarity check (prevents pairing highly mismatched long/short lines)
+                const mainLen = mainClean.length;
+                const transLen = transClean.length;
+                if (mainLen > 0 && transLen > 0) {
+                    const ratio = Math.min(mainLen, transLen) / Math.max(mainLen, transLen);
+                    if (ratio < 0.4) {
+                        lengthScore -= 400; // penalty for highly mismatched lengths
+                    } else if (ratio > 0.7) {
+                        lengthScore += 200; // boost for similar lengths
+                    }
+                }
+
+                const totalScore = baseScore + numberBoost + emojiBoost + properNounBoost + featuresBoost + lengthScore;
 
                 if (totalScore > bestMatchScore) {
                     bestMatchScore = totalScore;
@@ -908,27 +916,6 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
                 transIndex = i + 1;
             }
         }
-
-        if (bestMatchIndex !== -1) {
-            if (transToMain.has(bestMatchIndex)) {
-                const prev = transToMain.get(bestMatchIndex)!;
-                if (bestMatchScore > prev.score) {
-                    // Steal the match because this mainSub is a better fit for this translation line!
-                    mainMatches[prev.mainIndex] = -1;
-                    mainMatches[mainIndex] = bestMatchIndex;
-                    transToMain.set(bestMatchIndex, { mainIndex, score: bestMatchScore });
-                }
-            } else {
-                mainMatches[mainIndex] = bestMatchIndex;
-                transToMain.set(bestMatchIndex, { mainIndex, score: bestMatchScore });
-            }
-        }
-    }
-
-    // Now format and build the final merged array using the optimized matches
-    for (let mainIndex = 0; mainIndex < mainSubs.length; mainIndex++) {
-        const mainSub = mainSubs[mainIndex];
-        const bestMatchIndex = mainMatches[mainIndex];
 
         const cleanMainText = sanitizeText(mainSub.text);
         const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
@@ -955,7 +942,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     }
 
     console.log(`Finished merging. Result: ${mergedSubs.length}/${mainSubs.length} lines merged successfully (${mismatchesCount} mismatches).`);
-    return mergedSubs;
+    return mergedSubs;}
 }
 
 // Formats an array of subtitle objects back into SRT text
