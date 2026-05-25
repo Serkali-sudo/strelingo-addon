@@ -686,8 +686,6 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
         const mainProperNouns = mainHasLatin ? extractProperNouns(mainClean) : [];
         const mainFeatures = extractSpecialFeatures(mainClean);
 
-        console.log(`[Merge Match] Finding match for Main Sub: "${mainClean.replace(/\r?\n|\r/g, ' ')}" (${mainSub.startTime} -> ${mainSub.endTime})`);
-
         for (let i = transIndex; i < transSubs.length; i++) {
             const transSub = transSubs[i];
 
@@ -717,9 +715,8 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
 
                 // 1. Number matching
                 const transNumbers = extractNumbers(transClean);
-                let sharedNumbers: string[] = [];
                 if (mainNumbers.length > 0 && transNumbers.length > 0) {
-                    sharedNumbers = mainNumbers.filter(n => transNumbers.includes(n));
+                    const sharedNumbers = mainNumbers.filter(n => transNumbers.includes(n));
                     if (sharedNumbers.length > 0) {
                         numberBoost += 1000;
                     } else {
@@ -729,9 +726,8 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
 
                 // 2. Emoji matching
                 const transEmojis = extractEmojis(transClean);
-                let sharedEmojis: string[] = [];
                 if (mainEmojis.length > 0 && transEmojis.length > 0) {
-                    sharedEmojis = mainEmojis.filter(e => transEmojis.includes(e));
+                    const sharedEmojis = mainEmojis.filter(e => transEmojis.includes(e));
                     if (sharedEmojis.length > 0) {
                         emojiBoost += 500;
                     } else {
@@ -741,11 +737,10 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
 
                 // 3. Proper Nouns / Capitalized Latin Words matching
                 const transHasLatin = /[a-zA-Z]/.test(transClean);
-                let sharedProperNouns: string[] = [];
                 if (mainHasLatin && transHasLatin) {
                     const transProperNouns = extractProperNouns(transClean);
                     if (mainProperNouns.length > 0 && transProperNouns.length > 0) {
-                        sharedProperNouns = mainProperNouns.filter(w => 
+                        const sharedProperNouns = mainProperNouns.filter(w => 
                             transProperNouns.some(tw => tw.toLowerCase() === w.toLowerCase())
                         );
                         if (sharedProperNouns.length > 0) {
@@ -756,49 +751,25 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
 
                 // 4. Special punctuation/symbols features matching
                 const transFeatures = extractSpecialFeatures(transClean);
-                let qMatch = false;
                 if (mainFeatures.hasQuestion === transFeatures.hasQuestion) {
                     featuresBoost += 200; // reward matching structural questions vs statements
-                    qMatch = true;
                 } else {
                     featuresBoost -= 300; // penalty if mismatching query status
                 }
-                let exclMatch = false;
                 if (mainFeatures.hasExclamation && transFeatures.hasExclamation) {
                     featuresBoost += 200;
-                    exclMatch = true;
                 }
-                let ellipsisMatch = false;
                 if (mainFeatures.hasEllipsis && transFeatures.hasEllipsis) {
                     featuresBoost += 200;
-                    ellipsisMatch = true;
                 }
-                let musicMatch = false;
                 if (mainFeatures.hasMusic && transFeatures.hasMusic) {
                     featuresBoost += 500;
-                    musicMatch = true;
                 }
-                let speakerDashMatch = false;
                 if (mainFeatures.hasSpeakerDash && transFeatures.hasSpeakerDash) {
                     featuresBoost += 300;
-                    speakerDashMatch = true;
                 }
 
                 const totalScore = baseScore + numberBoost + emojiBoost + properNounBoost + featuresBoost;
-
-                console.log(`  [Candidate ${i}] "${transClean.replace(/\r?\n|\r/g, ' ').substring(0, 40)}" (${transSub.startTime} -> ${transSub.endTime})`);
-                console.log(`    - Timing Score: ${baseScore} (diff: ${timeDiff}ms)`);
-                if (mainNumbers.length > 0 && transNumbers.length > 0) {
-                    console.log(`    - Numbers Boost: ${numberBoost} (shared: ${JSON.stringify(sharedNumbers)})`);
-                }
-                if (mainEmojis.length > 0 && transEmojis.length > 0) {
-                    console.log(`    - Emojis Boost: ${emojiBoost} (shared: ${JSON.stringify(sharedEmojis)})`);
-                }
-                if (sharedProperNouns.length > 0) {
-                    console.log(`    - Proper Nouns Boost: ${properNounBoost} (shared: ${JSON.stringify(sharedProperNouns)})`);
-                }
-                console.log(`    - Structural Match: Q=${qMatch}, Excl=${exclMatch}, Ellipsis=${ellipsisMatch}, Music=${musicMatch}, SpeakerDash=${speakerDashMatch} (Boost: ${featuresBoost})`);
-                console.log(`    - Total Composite Score: ${totalScore}`);
 
                 if (totalScore > bestMatchScore) {
                     bestMatchScore = totalScore;
@@ -826,12 +797,12 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
             if (flatTransText) {
                 mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
-                console.log(`[Merge Selected] Main: "${flatMainText}" paired with Winner Candidate ${bestMatchIndex}: "${flatTransText}" (Score: ${bestMatchScore})`);
+                console.log(`[Merge] "${flatMainText}" -> "${flatTransText}" (Score: ${bestMatchScore})`);
             } else {
-                console.log(`[Merge Selected] Main: "${flatMainText}" paired with empty Translation Candidate ${bestMatchIndex}`);
+                console.log(`[Merge] "${flatMainText}" paired with empty Translation Candidate ${bestMatchIndex}`);
             }
         } else {
-            console.log(`[Merge Mismatch] Main: "${flatMainText}" did not find any matching translation subtitle within time threshold.`);
+            console.log(`[Merge Mismatch] "${flatMainText}" (No match found within time threshold)`);
         }
 
         if (!mergedText) continue;
