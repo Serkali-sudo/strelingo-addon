@@ -628,177 +628,16 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
     }
 }
 
-// Helper functions for language-invariant feature extraction to improve merge accuracy
-function extractNumbers(cleanText: string): string[] {
-    return cleanText.match(/\d+/g) || [];
-}
-
-function extractEmojis(cleanText: string): string[] {
-    const regex = /[\u{1F300}-\u{1F9FF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu;
-    return cleanText.match(regex) || [];
-}
-
-function extractProperNouns(cleanText: string): string[] {
-    return cleanText.match(/\b[A-Z][a-zA-Z]{3,}\b/g) || [];
-}
-
-interface SpecialFeatures {
-    hasQuestion: boolean;
-    hasExclamation: boolean;
-    hasEllipsis: boolean;
-    hasMusic: boolean;
-    hasSpeakerDash: boolean;
-}
-
-function extractSpecialFeatures(cleanText: string): SpecialFeatures {
-    return {
-        hasQuestion: /[?¿？]/.test(cleanText),
-        hasExclamation: /[!¡！]/.test(cleanText),
-        hasEllipsis: /\.\.\.|…/.test(cleanText),
-        hasMusic: /[♪♫]/.test(cleanText),
-        hasSpeakerDash: /(?:^|\n)\s*-\s/.test(cleanText)
-    };
-}
-
-function detectSubtitlesOffset(mainSubs: SRTLine[], transSubs: SRTLine[], silent = false): number {
-    const offsets: number[] = [];
-
-    // Map transSubs numbers to their starting times
-    const transNumbersMap = new Map<string, number[]>();
-    for (const sub of transSubs) {
-        if (!sub.startTime || !sub.text) continue;
-        const clean = sanitizeText(sub.text);
-        const nums = extractNumbers(clean);
-        const tStart = parseTimeToMs(sub.startTime);
-        for (const num of nums) {
-            if (!transNumbersMap.has(num)) {
-                transNumbersMap.set(num, []);
-            }
-            transNumbersMap.get(num)!.push(tStart);
-        }
-    }
-
-    // Scan mainSubs and calculate offsets based on matching numbers
-    for (const sub of mainSubs) {
-        if (!sub.startTime || !sub.text) continue;
-        const clean = sanitizeText(sub.text);
-        const nums = extractNumbers(clean);
-        const mStart = parseTimeToMs(sub.startTime);
-        for (const num of nums) {
-            const transStarts = transNumbersMap.get(num);
-            if (transStarts) {
-                for (const tStart of transStarts) {
-                    const diff = mStart - tStart;
-                    // Ignore extreme offsets (e.g. greater than 5 minutes)
-                    if (Math.abs(diff) < 300000) {
-                        offsets.push(diff);
-                    }
-                }
-            }
-        }
-    }
-
-    // Try proper nouns if we have very few number-based offset matches
-    if (offsets.length < 3) {
-        const transNounsMap = new Map<string, number[]>();
-        for (const sub of transSubs) {
-            if (!sub.startTime || !sub.text) continue;
-            const clean = sanitizeText(sub.text);
-            const hasLatin = /[a-zA-Z]/.test(clean);
-            if (!hasLatin) continue;
-            const nouns = extractProperNouns(clean);
-            const tStart = parseTimeToMs(sub.startTime);
-            for (const noun of nouns) {
-                const lower = noun.toLowerCase();
-                if (!transNounsMap.has(lower)) {
-                    transNounsMap.set(lower, []);
-                }
-                transNounsMap.get(lower)!.push(tStart);
-            }
-        }
-
-        for (const sub of mainSubs) {
-            if (!sub.startTime || !sub.text) continue;
-            const clean = sanitizeText(sub.text);
-            const hasLatin = /[a-zA-Z]/.test(clean);
-            if (!hasLatin) continue;
-            const nouns = extractProperNouns(clean);
-            const mStart = parseTimeToMs(sub.startTime);
-            for (const noun of nouns) {
-                const lower = noun.toLowerCase();
-                const transStarts = transNounsMap.get(lower);
-                if (transStarts) {
-                    for (const tStart of transStarts) {
-                        const diff = mStart - tStart;
-                        if (Math.abs(diff) < 300000) {
-                            offsets.push(diff);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (offsets.length === 0) {
-        return 0;
-    }
-
-    // Find the offset cluster with highest consensus (within 1.5 seconds)
-    let bestOffset = 0;
-    let maxClusterCount = 0;
-
-    const limitedOffsets = offsets.slice(0, 1000);
-    for (const offset of limitedOffsets) {
-        let count = 0;
-        let sum = 0;
-        for (const other of limitedOffsets) {
-            if (Math.abs(other - offset) < 1500) {
-                count++;
-                sum += other;
-            }
-        }
-        if (count > maxClusterCount) {
-            maxClusterCount = count;
-            bestOffset = sum / count;
-        }
-    }
-
-    // Minimum cluster confidence of 2 matches
-    if (maxClusterCount >= 2) {
-        if (!silent) {
-            console.log(`[Merge Offset] Detected constant timing offset: ${bestOffset.toFixed(0)}ms (confidence: ${maxClusterCount})`);
-        }
-        return bestOffset;
-    }
-
-    return 0;
-}
-
-// Merges two arrays of parsed subtitles based on time and language-invariant signals
-function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500, silent = false): SRTLine[] {
-    const globalOffsetShift = detectSubtitlesOffset(mainSubs, transSubs, silent);
-    if (!silent) {
-        console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs (Threshold: ${mergeThresholdMs}ms, Shift: ${globalOffsetShift.toFixed(0)}ms).`);
-    }
+// Merges two arrays of parsed subtitles based on time
+function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
+    console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
     const mergedSubs: SRTLine[] = [];
     let transIndex = 0;
-    let mismatchesCount = 0;
-
-    interface IntermediateEntry {
-        mainSub: SRTLine;
-        bestMatchIndex: number;
-        matchedIndices: number[];
-        flatMainText: string;
-        flatTransText: string | null;
-    }
-
-    const intermediateEntries: IntermediateEntry[] = [];
 
     for (const mainSub of mainSubs) {
         let foundMatch = false;
         let bestMatchIndex = -1;
-        let bestMatchScore = -Infinity;
-        const candidateMatches: { index: number; score: number }[] = [];
+        let smallestTimeDiff = Infinity;
 
         if (!mainSub || !mainSub.startTime || !mainSub.endTime) {
             console.warn("Skipping invalid main subtitle entry:", mainSub);
@@ -807,13 +646,6 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
 
         const mainStartTime = parseTimeToMs(mainSub.startTime);
         const mainEndTime = parseTimeToMs(mainSub.endTime);
-
-        const mainClean = sanitizeText(mainSub.text);
-        const mainNumbers = extractNumbers(mainClean);
-        const mainEmojis = extractEmojis(mainClean);
-        const mainHasLatin = /[a-zA-Z]/.test(mainClean);
-        const mainProperNouns = mainHasLatin ? extractProperNouns(mainClean) : [];
-        const mainFeatures = extractSpecialFeatures(mainClean);
 
         for (let i = transIndex; i < transSubs.length; i++) {
             const transSub = transSubs[i];
@@ -826,201 +658,50 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             const transStartTime = parseTimeToMs(transSub.startTime);
             const transEndTime = parseTimeToMs(transSub.endTime);
 
-            const shiftedTransStart = transStartTime + globalOffsetShift;
-            const shiftedTransEnd = transEndTime + globalOffsetShift;
-
-            const startsOverlap = (shiftedTransStart >= mainStartTime && shiftedTransStart < mainEndTime);
-            const endsOverlap = (shiftedTransEnd > mainStartTime && shiftedTransEnd <= mainEndTime);
-            const isWithin = (shiftedTransStart >= mainStartTime && shiftedTransEnd <= mainEndTime);
-            const contains = (shiftedTransStart < mainStartTime && shiftedTransEnd > mainEndTime);
-            const timeDiff = Math.abs(mainStartTime - shiftedTransStart);
+            const startsOverlap = (transStartTime >= mainStartTime && transStartTime < mainEndTime);
+            const endsOverlap = (transEndTime > mainStartTime && transEndTime <= mainEndTime);
+            const isWithin = (transStartTime >= mainStartTime && transEndTime <= mainEndTime);
+            const contains = (transStartTime < mainStartTime && transEndTime > mainEndTime);
+            const timeDiff = Math.abs(mainStartTime - transStartTime);
 
             if (startsOverlap || endsOverlap || isWithin || contains || timeDiff < mergeThresholdMs) {
-                // Compute composite score for language-invariant alignment
-                const baseScore = 1000 - timeDiff;
-                let numberBoost = 0;
-                let emojiBoost = 0;
-                let properNounBoost = 0;
-                let featuresBoost = 0;
-                let lengthScore = 0;
-
-                const transClean = sanitizeText(transSub.text);
-
-                // 1. Number matching
-                const transNumbers = extractNumbers(transClean);
-                if (mainNumbers.length > 0 && transNumbers.length > 0) {
-                    const sharedNumbers = mainNumbers.filter(n => transNumbers.includes(n));
-                    if (sharedNumbers.length > 0) {
-                        numberBoost += 1000;
-                    } else {
-                        numberBoost -= 1000;
-                    }
-                }
-
-                // 2. Emoji matching
-                const transEmojis = extractEmojis(transClean);
-                if (mainEmojis.length > 0 && transEmojis.length > 0) {
-                    const sharedEmojis = mainEmojis.filter(e => transEmojis.includes(e));
-                    if (sharedEmojis.length > 0) {
-                        emojiBoost += 500;
-                    } else {
-                        emojiBoost -= 500;
-                    }
-                }
-
-                // 3. Proper Nouns / Capitalized Latin Words matching
-                const transHasLatin = /[a-zA-Z]/.test(transClean);
-                if (mainHasLatin && transHasLatin) {
-                    const transProperNouns = extractProperNouns(transClean);
-                    if (mainProperNouns.length > 0 && transProperNouns.length > 0) {
-                        const sharedProperNouns = mainProperNouns.filter(w => 
-                            transProperNouns.some(tw => tw.toLowerCase() === w.toLowerCase())
-                        );
-                        if (sharedProperNouns.length > 0) {
-                            properNounBoost += 300 * sharedProperNouns.length;
-                        }
-                    }
-                }
-
-                // 4. Special punctuation/symbols features matching
-                const transFeatures = extractSpecialFeatures(transClean);
-                if (mainFeatures.hasQuestion === transFeatures.hasQuestion) {
-                    featuresBoost += 200; // reward matching structural questions vs statements
-                } else {
-                    featuresBoost -= 300; // penalty if mismatching query status
-                }
-                if (mainFeatures.hasExclamation && transFeatures.hasExclamation) {
-                    featuresBoost += 200;
-                }
-                if (mainFeatures.hasEllipsis && transFeatures.hasEllipsis) {
-                    featuresBoost += 200;
-                }
-                if (mainFeatures.hasMusic && transFeatures.hasMusic) {
-                    featuresBoost += 500;
-                }
-                if (mainFeatures.hasSpeakerDash && transFeatures.hasSpeakerDash) {
-                    featuresBoost += 300;
-                }
-
-                // 5. Length ratio similarity check (prevents pairing highly mismatched long/short lines)
-                const mainLen = mainClean.length;
-                const transLen = transClean.length;
-                if (mainLen > 0 && transLen > 0) {
-                    const ratio = Math.min(mainLen, transLen) / Math.max(mainLen, transLen);
-                    if (ratio < 0.4) {
-                        lengthScore -= 400; // penalty for highly mismatched lengths
-                    } else if (ratio > 0.7) {
-                        lengthScore += 200; // boost for similar lengths
-                    }
-                }
-
-                const totalScore = baseScore + numberBoost + emojiBoost + properNounBoost + featuresBoost + lengthScore;
-
-                if (totalScore > bestMatchScore) {
-                    bestMatchScore = totalScore;
+                if (timeDiff < smallestTimeDiff) {
+                    smallestTimeDiff = timeDiff;
                     bestMatchIndex = i;
                 }
-                candidateMatches.push({ index: i, score: totalScore });
                 foundMatch = true;
-            } else if (foundMatch && shiftedTransStart > mainEndTime + mergeThresholdMs) {
+            } else if (foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
                 break;
-            } else if (!foundMatch && shiftedTransStart > mainEndTime + mergeThresholdMs) {
+            } else if (!foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
                 break;
             }
 
-            if (shiftedTransEnd < mainStartTime - mergeThresholdMs * 2 && i === transIndex) {
+            if (transEndTime < mainStartTime - mergeThresholdMs * 2 && i === transIndex) {
                 transIndex = i + 1;
             }
-        }
-
-        let matchedIndices: number[] = [];
-        if (bestMatchIndex !== -1) {
-            matchedIndices = candidateMatches
-                .filter(m => m.score >= bestMatchScore - 300)
-                .map(m => m.index)
-                .sort((a, b) => a - b);
         }
 
         const cleanMainText = sanitizeText(mainSub.text);
         const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
 
-        let flatTransText: string | null = null;
-        if (matchedIndices.length > 0) {
-            const uniqueTexts = new Set<string>();
-            const textsList: string[] = [];
-            for (const idx of matchedIndices) {
-                const sub = transSubs[idx];
-                const cleanTrans = sanitizeText(sub.text).replace(/\r?\n|\r/g, ' ').trim();
-                if (cleanTrans && !uniqueTexts.has(cleanTrans)) {
-                    uniqueTexts.add(cleanTrans);
-                    textsList.push(cleanTrans);
-                }
+        let mergedText = flatMainText;
+        if (bestMatchIndex !== -1) {
+            const bestTransSub = transSubs[bestMatchIndex];
+            const cleanTransText = sanitizeText(bestTransSub.text);
+            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
+            if (flatTransText) {
+                mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
             }
-            if (textsList.length > 0) {
-                flatTransText = textsList.join(" / ");
-            }
-        }
-
-        intermediateEntries.push({
-            mainSub: { ...mainSub }, // clone mainSub to prevent mutating original mainSubs array
-            bestMatchIndex,
-            matchedIndices,
-            flatMainText,
-            flatTransText
-        });
-    }
-
-    // Clever Combine Pass: Merge consecutive entries sharing the same non-empty translation set
-    const combinedEntries: IntermediateEntry[] = [];
-
-    for (const entry of intermediateEntries) {
-        if (combinedEntries.length === 0) {
-            combinedEntries.push(entry);
-            continue;
-        }
-
-        const lastEntry = combinedEntries[combinedEntries.length - 1];
-        const bothMatchSame = (entry.matchedIndices.length > 0 &&
-                               lastEntry.matchedIndices.length > 0 &&
-                               JSON.stringify(entry.matchedIndices) === JSON.stringify(lastEntry.matchedIndices));
-
-        let smallGap = false;
-        if (bothMatchSame) {
-            const lastEnd = parseTimeToMs(lastEntry.mainSub.endTime);
-            const currentStart = parseTimeToMs(entry.mainSub.startTime);
-            // Only combine if the gap between consecutive entries is less than 2 seconds (2000ms)
-            smallGap = (currentStart - lastEnd < 2000);
-        }
-
-        if (bothMatchSame && smallGap) {
-            // Combine them!
-            lastEntry.mainSub.endTime = entry.mainSub.endTime;
-            lastEntry.flatMainText = (lastEntry.flatMainText + " " + entry.flatMainText).trim();
-        } else {
-            combinedEntries.push(entry);
-        }
-    }
-
-    // Format final entries into SRTLine list
-    for (const entry of combinedEntries) {
-        let mergedText = entry.flatMainText;
-        if (entry.flatTransText) {
-            mergedText = ('<b>' + entry.flatMainText + '</b>\n<i>> ' + entry.flatTransText + '</i>').trim();
-        } else {
-            mismatchesCount++;
         }
 
         if (!mergedText) continue;
 
         mergedSubs.push({
-            ...entry.mainSub,
+            ...mainSub,
             text: mergedText
         });
     }
-
-    if (!silent) {
-        console.log(`Finished merging. Result: ${mergedSubs.length}/${mainSubs.length} lines merged successfully (${mismatchesCount} mismatches).`);
-    }
+    console.log(`Finished merging. Result has ${mergedSubs.length} entries.`);
     return mergedSubs;
 }
 
@@ -1445,186 +1126,139 @@ async function handleSubtitlesRequest(c: any) {
             transSubInfoList = await sortByFilenameMatch(transSubInfoList, videoParams.filename);
         }
 
+
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
-
-        if (directServingEnabled) {
-            console.log(`Direct serving enabled! Instantly generating edge-serving URL on search without downloading or parsing subtitles.`);
-            const workerUrl = `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
-            
-            // Get the best main subtitle info (the top candidate after sorting)
-            const mainSubInfo = mainSubInfoList[0];
-            
-            // Get the top 3 sorted translation candidates
-            const candidatesToEvaluate = transSubInfoList.slice(0, 3);
-            
-            const paramsObj = {
-                mainUrl: mainSubInfo.url,
-                mainFormat: mainSubInfo.format || 'srt',
-                mainLang: mainSubInfo.lang || mainLang || 'eng',
-                // Keep transUrl/transFormat/transLang for backward compatibility or simple serves:
-                transUrl: candidatesToEvaluate[0].url,
-                transFormat: candidatesToEvaluate[0].format || 'srt',
-                transLang: candidatesToEvaluate[0].lang || transLang || 'eng',
-                // Pass list of candidates for direct-serve side evaluation:
-                transCandidates: candidatesToEvaluate.map(candidate => ({
-                    url: candidate.url,
-                    format: candidate.format || 'srt',
-                    lang: candidate.lang || transLang || 'eng',
-                    id: candidate.id
-                }))
-            };
-
-            const encodedData = encodeBase64UrlSafe(JSON.stringify(paramsObj));
-            const srtFileName = type === 'series' && season && episode
-                ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
-                : `${imdbId}_${mainLang}_${transLang}.srt`;
-            const uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
-            const subtitleEntryId = `merged-${mainSubInfo.id}-${candidatesToEvaluate[0].id}-direct`;
-
-            const readableLang = `${languageMap[mainLang as keyof typeof languageMap] || mainLang}+${languageMap[transLang as keyof typeof languageMap] || transLang}`;
-            const finalSubtitles = [{
-                id: subtitleEntryId,
-                url: uploadUrl,
-                lang: readableLang,
-                label: readableLang
-            }];
-
-            const successResponse = c.json({
-                subtitles: finalSubtitles,
-                cacheMaxAge: 6 * 3600,
-                staleRevalidate: 24 * 3600
-            }, 200, {
-                'Cache-Control': 'public, max-age=21600, s-maxage=21600, stale-while-revalidate=86400',
-            });
-            putCachedResponse(cacheKey, successResponse, c.executionCtx);
-            return successResponse;
-        }
-
         let selectedMainSubInfo: SubtitleInfo | null = null;
         let mainParsed: SRTLine[] | null = null;
 
-        // Fetch and parse the best main subtitle
-        for (const mainSubInfo of mainSubInfoList) {
-            console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, g=${mainSubInfo.g}`);
-            const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang);
+        if (directServingEnabled) {
+            selectedMainSubInfo = mainSubInfoList[0];
+            console.log(`Direct serving: selected main subtitle ID=${selectedMainSubInfo.id}, g=${selectedMainSubInfo.g}`);
+        } else {
+            for (const mainSubInfo of mainSubInfoList) {
+                console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, g=${mainSubInfo.g}`);
+                const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang);
 
-            if (!mainSubContent) {
-                console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
-                continue;
+                if (!mainSubContent) {
+                    console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
+                    continue;
+                }
+
+                console.log("Parsing main subtitle content...");
+                const parsed = parseSrt(mainSubContent);
+                if (!parsed) {
+                    console.warn(`Failed to parse content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
+                    continue;
+                }
+
+                mainParsed = parsed;
+                selectedMainSubInfo = mainSubInfo;
+                console.log(`Successfully processed main subtitle (ID: ${selectedMainSubInfo.id}). Proceeding with translations.`);
+                break;
             }
-
-            const parsed = parseSrt(mainSubContent);
-            if (!parsed) {
-                console.warn(`Failed to parse content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
-                continue;
-            }
-
-            mainParsed = parsed;
-            selectedMainSubInfo = mainSubInfo;
-            console.log(`Successfully processed main subtitle (ID: ${selectedMainSubInfo.id}). Proceeding to evaluate translations.`);
-            break;
         }
 
-        if (!selectedMainSubInfo || !mainParsed) {
+        if (!selectedMainSubInfo) {
             console.error("Failed to fetch and parse any of the available main subtitles. Cannot proceed.");
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
             putCachedResponse(cacheKey, res, c.executionCtx);
             return res;
         }
 
-        // Evaluate the first 3 translation candidates in parallel to choose the one with the fewest mismatches
-        let bestTransSubInfo: SubtitleInfo | null = null;
-        let bestMergedParsed: SRTLine[] | null = null;
-
-        const candidatesToEvaluate = transSubInfoList.slice(0, 3);
-        console.log(`Evaluating up to ${candidatesToEvaluate.length} translation candidates in parallel to select the best one...`);
-
-        const fetchedCandidates = await Promise.all(
-            candidatesToEvaluate.map(async (info) => {
-                try {
-                    const content = await fetchSubtitleContent(info.url, info.format, info.lang);
-                    if (!content) return null;
-                    const parsed = parseSrt(content);
-                    if (!parsed || parsed.length === 0) return null;
-                    return { info, parsed };
-                } catch (e: any) {
-                    console.error(`Failed to fetch/parse candidate ${info.id}:`, e.message);
-                    return null;
-                }
-            })
-        );
-
-        const validCandidates = fetchedCandidates.filter((c): c is { info: SubtitleInfo; parsed: SRTLine[] } => c !== null);
-
-        if (validCandidates.length === 1) {
-            const candidate = validCandidates[0];
-            console.log(`Only 1 translation candidate available (ID=${candidate.info.id}). Running full merge directly...`);
-            bestTransSubInfo = candidate.info;
-            bestMergedParsed = mergeSubtitles([...mainParsed], candidate.parsed, 500, false);
-        } else if (validCandidates.length > 1) {
-            let lowestMismatchRate = Infinity;
-            let bestTransParsed: SRTLine[] | null = null;
-
-            console.log(`Running fast dry-run evaluations on ${validCandidates.length} candidates...`);
-            const mainSlice = mainParsed.slice(0, 150);
-
-            for (const candidate of validCandidates) {
-                const mergedSlice = mergeSubtitles(mainSlice, candidate.parsed, 500, true);
-                const mismatches = mergedSlice.filter(line => !line.text.includes("<i>> ")).length;
-                const mismatchRate = mismatches / Math.max(1, mergedSlice.length);
-                console.log(`[Merge Evaluation] Candidate ID=${candidate.info.id} (dry-run on ${mergedSlice.length} lines): ${mismatches} mismatches (rate: ${(mismatchRate * 100).toFixed(1)}%).`);
-
-                if (mismatchRate < lowestMismatchRate) {
-                    lowestMismatchRate = mismatchRate;
-                    bestTransSubInfo = candidate.info;
-                    bestTransParsed = candidate.parsed;
-                }
-            }
-
-            if (bestTransSubInfo && bestTransParsed) {
-                console.log(`[Merge Winner] Selected Candidate ID=${bestTransSubInfo.id} (lowest dry-run mismatch rate: ${(lowestMismatchRate * 100).toFixed(1)}%). Running full merge...`);
-                bestMergedParsed = mergeSubtitles([...mainParsed], bestTransParsed, 500, false);
-            }
+        if (!directServingEnabled && !mainParsed) {
+            console.error("Failed to parse any of the available main subtitles. Cannot proceed.");
+            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
+            putCachedResponse(cacheKey, res, c.executionCtx);
+            return res;
         }
 
         const finalSubtitles = [];
+        const usedTransUrls = new Set();
 
-        if (bestTransSubInfo && bestMergedParsed) {
-            const finalMismatches = bestMergedParsed.filter(line => !line.text.includes("<i>> ")).length;
-            console.log(`[Merge Winner] Selected Candidate ID=${bestTransSubInfo.id} (Full merge: ${finalMismatches} mismatches out of ${bestMergedParsed.length} lines).`);
-            
+        for (const transSubInfo of transSubInfoList) {
+            if (finalSubtitles.length >= 4) break;
+            if (usedTransUrls.has(transSubInfo.url)) continue;
+            usedTransUrls.add(transSubInfo.url);
+
+            const version = finalSubtitles.length + 1;
+            console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
+
             let uploadUrl: string | null = null;
-            let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${bestTransSubInfo.id}`;
+            let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${transSubInfo.id}`;
 
-            console.log(`Formatting merged SRT for selected winner...`);
-            const mergedSrtString = formatSrt(bestMergedParsed);
-            if (mergedSrtString) {
+            if (directServingEnabled) {
+                console.log(`Direct serving enabled! Generating edge-serving URL for v${version}...`);
+                const workerUrl = `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+
+                const paramsObj = {
+                    mainUrl: selectedMainSubInfo.url,
+                    mainFormat: selectedMainSubInfo.format || 'srt',
+                    mainLang: selectedMainSubInfo.lang || mainLang || 'eng',
+                    transUrl: transSubInfo.url,
+                    transFormat: transSubInfo.format || 'srt',
+                    transLang: transSubInfo.lang || transLang || 'eng'
+                };
+
+                const encodedData = encodeBase64UrlSafe(JSON.stringify(paramsObj));
+                const srtFileName = type === 'series' && season && episode
+                    ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                    : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
+                uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
+                subtitleEntryId += '-direct';
+            } else {
+                const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
+
+                if (!transSubContent) {
+                    console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
+                    continue;
+                }
+
+                const transParsed = parseSrt(transSubContent);
+                if (!transParsed) {
+                    console.warn(`Failed to parse content for translation v${version}. Skipping.`);
+                    continue;
+                }
+
+                console.log(`Merging main with translation v${version}...`);
+                const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
+                if (!mergedParsed || mergedParsed.length === 0) {
+                    console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
+                    continue;
+                }
+
+                console.log(`Formatting merged SRT for v${version}...`);
+                const mergedSrtString = formatSrt(mergedParsed);
+                if (!mergedSrtString) {
+                    console.warn(`Failed to format merged SRT for v${version}. Skipping.`);
+                    continue;
+                }
+
                 if (!skipVercelBlob) {
-                    console.log(`Attempting Vercel Blob upload for best candidate...`);
+                    console.log(`Attempting Vercel Blob upload for v${version}...`);
                     try {
                         const blobFileName = type === 'series' && season && episode
-                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
-                            : `${imdbId}_${mainLang}_${transLang}.srt`;
+                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                            : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
 
                         const { url } = await put(
                             blobFileName,
                             mergedSrtString,
                             { access: 'public', addRandomSuffix: true }
                         );
-                        console.log(`Uploaded best candidate to Vercel Blob: ${url}`);
+                        console.log(`Uploaded v${version} to Vercel Blob: ${url}`);
                         uploadUrl = url;
                         subtitleEntryId += '-vercel';
                     } catch (e: any) {
-                        console.error(`Failed to upload merged SRT to Vercel Blob: ${e.message}`);
+                        console.error(`Failed to upload merged SRT for v${version} to Vercel Blob: ${e.message}`);
                     }
                 }
 
                 if (!uploadUrl && supabase) {
-                    console.log(`Attempting Supabase Storage upload for best candidate...`);
+                    console.log(`Attempting Supabase Storage upload for v${version}...`);
                     try {
                         const supabaseFileName = type === 'series' && season && episode
-                            ? `${imdbId}/S${season}E${episode}_${mainLang}_${transLang}.srt`
-                            : `${imdbId}/${mainLang}_${transLang}.srt`;
+                            ? `${imdbId}/S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                            : `${imdbId}/${mainLang}_${transLang}_v${version}.srt`;
 
                         const { error: supabaseError } = await supabase
                             .storage
@@ -1643,14 +1277,14 @@ async function handleSubtitlesRequest(c: any) {
                             .getPublicUrl(supabaseFileName);
 
                         if (!publicUrlData || !publicUrlData.publicUrl) {
-                            console.error(`Supabase upload successful, but failed to get public URL.`);
+                            console.error(`Supabase upload successful for v${version}, but failed to get public URL.`);
                         } else {
                             uploadUrl = publicUrlData.publicUrl;
-                            console.log(`Uploaded best candidate to Supabase: ${uploadUrl}`);
+                            console.log(`Uploaded v${version} to Supabase: ${uploadUrl}`);
                             subtitleEntryId += '-supabase';
                         }
                     } catch (e: any) {
-                        console.error(`Supabase Storage upload failed: ${e.message}`);
+                        console.error(`Supabase Storage upload failed for v${version}: ${e.message}`);
                     }
                 }
 
@@ -1658,22 +1292,22 @@ async function handleSubtitlesRequest(c: any) {
                 const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
 
                 if (!uploadUrl && localStorageDir) {
-                    console.log(`Attempting Local Storage upload for best candidate...`);
+                    console.log(`Attempting Local Storage upload for v${version}...`);
                     try {
                         await fs.mkdir(localStorageDir, { recursive: true });
 
                         const localFileName = type === 'series' && season && episode
-                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
-                            : `${imdbId}_${mainLang}_${transLang}.srt`;
+                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
+                            : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
                         const localFilePath = path.join(localStorageDir, localFileName);
 
                         await fs.writeFile(localFilePath, mergedSrtString, 'utf-8');
 
                         uploadUrl = `${externalUrl}/subtitles/${localFileName}`;
-                        console.log(`Uploaded best candidate to Local Storage: ${uploadUrl}`);
+                        console.log(`Uploaded v${version} to Local Storage: ${uploadUrl}`);
                         subtitleEntryId += '-local';
                     } catch (e: any) {
-                        console.warn(`Local Storage write failed: ${e.message}`);
+                        console.warn(`Local Storage write failed (normal on read-only environments like Workers): ${e.message}`);
                     }
                 }
             }
@@ -1687,10 +1321,8 @@ async function handleSubtitlesRequest(c: any) {
                     label: readableLang
                 });
             } else {
-                console.warn(`Failed to upload best candidate subtitle to any storage destination.`);
+                console.warn(`Failed to upload v${version} to either Vercel Blob or Supabase Storage.`);
             }
-        } else {
-            console.warn("No valid translation candidates could be processed and evaluated.");
         }
 
         if (finalSubtitles.length === 0) {
@@ -1738,13 +1370,12 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
         const transUrl = params.transUrl;
         const transFormat = params.transFormat || 'srt';
         const transLang = params.transLang || 'eng';
-        const transCandidates = params.transCandidates;
 
-        if (!mainUrl || (!transUrl && (!transCandidates || transCandidates.length === 0))) {
+        if (!mainUrl || !transUrl) {
             return c.text('Missing required subtitle URLs inside payload', 400);
         }
 
-        console.log(`Direct subtitle serve request. Main: ${mainUrl}`);
+        console.log(`Direct subtitle serve request. Main: ${mainUrl}, Trans: ${transUrl}`);
 
         const mainSubContent = await fetchSubtitleContent(mainUrl, mainFormat, mainLang);
 
@@ -1752,64 +1383,13 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
         const mainParsed = parseSrt(mainSubContent);
         if (!mainParsed) throw new Error("Failed to parse main subtitle");
 
-        let bestTransParsed: SRTLine[] | null = null;
-        let selectedTransId = '';
+        const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
 
-        if (Array.isArray(transCandidates) && transCandidates.length > 0) {
-            console.log(`Evaluating ${transCandidates.length} translation candidates on direct-serve route...`);
-            const fetchedCandidates = await Promise.all(
-                transCandidates.map(async (info: any) => {
-                    try {
-                        const content = await fetchSubtitleContent(info.url, info.format, info.lang);
-                        if (!content) return null;
-                        const parsed = parseSrt(content);
-                        if (!parsed || parsed.length === 0) return null;
-                        return { info, parsed };
-                    } catch (e: any) {
-                        console.error(`Failed to fetch/parse candidate ${info.id}:`, e.message);
-                        return null;
-                    }
-                })
-            );
+        if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
+        const transParsed = parseSrt(transSubContent);
+        if (!transParsed) throw new Error("Failed to parse translation subtitle");
 
-            const validCandidates = fetchedCandidates.filter((cand): cand is { info: any; parsed: SRTLine[] } => cand !== null);
-
-            if (validCandidates.length === 1) {
-                const candidate = validCandidates[0];
-                console.log(`Only 1 translation candidate available (ID=${candidate.info.id}).`);
-                bestTransParsed = candidate.parsed;
-                selectedTransId = candidate.info.id;
-            } else if (validCandidates.length > 1) {
-                let lowestMismatchRate = Infinity;
-                const mainSlice = mainParsed.slice(0, 150);
-
-                for (const candidate of validCandidates) {
-                    const mergedSlice = mergeSubtitles(mainSlice, candidate.parsed, 500, true);
-                    const mismatches = mergedSlice.filter(line => !line.text.includes("<i>> ")).length;
-                    const mismatchRate = mismatches / Math.max(1, mergedSlice.length);
-                    console.log(`[Direct Merge Evaluation] Candidate ID=${candidate.info.id} (dry-run on ${mergedSlice.length} lines): ${mismatches} mismatches (rate: ${(mismatchRate * 100).toFixed(1)}%).`);
-
-                    if (mismatchRate < lowestMismatchRate) {
-                        lowestMismatchRate = mismatchRate;
-                        bestTransParsed = candidate.parsed;
-                        selectedTransId = candidate.info.id;
-                    }
-                }
-            }
-        }
-
-        if (!bestTransParsed && transUrl) {
-            console.log(`Using fallback direct translation subtitle: ${transUrl}`);
-            const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
-            if (transSubContent) {
-                bestTransParsed = parseSrt(transSubContent);
-            }
-        }
-
-        if (!bestTransParsed) throw new Error("Failed to fetch or evaluate any translation subtitle");
-
-        console.log(`Running full merge on direct-serve route (selected translation: ${selectedTransId || 'fallback'})...`);
-        const mergedParsed = mergeSubtitles([...mainParsed], bestTransParsed, 500, false);
+        const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
         if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
 
         const mergedSrtString = formatSrt(mergedParsed);
