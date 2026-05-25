@@ -689,8 +689,8 @@ function detectSubtitlesOffset(mainSubs: SRTLine[], transSubs: SRTLine[]): numbe
             if (transStarts) {
                 for (const tStart of transStarts) {
                     const diff = mStart - tStart;
-                    // Ignore extreme offsets (e.g. greater than 2 minutes)
-                    if (Math.abs(diff) < 120000) {
+                    // Ignore extreme offsets (e.g. greater than 5 minutes)
+                    if (Math.abs(diff) < 300000) {
                         offsets.push(diff);
                     }
                 }
@@ -730,7 +730,7 @@ function detectSubtitlesOffset(mainSubs: SRTLine[], transSubs: SRTLine[]): numbe
                 if (transStarts) {
                     for (const tStart of transStarts) {
                         const diff = mStart - tStart;
-                        if (Math.abs(diff) < 120000) {
+                        if (Math.abs(diff) < 300000) {
                             offsets.push(diff);
                         }
                     }
@@ -780,7 +780,12 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     let transIndex = 0;
     let mismatchesCount = 0;
 
-    for (const mainSub of mainSubs) {
+    // Track matching pairs to prevent duplicate matching of the same translation subtitle
+    const mainMatches = new Array<number>(mainSubs.length).fill(-1);
+    const transToMain = new Map<number, { mainIndex: number; score: number }>();
+
+    for (let mainIndex = 0; mainIndex < mainSubs.length; mainIndex++) {
+        const mainSub = mainSubs[mainIndex];
         let foundMatch = false;
         let bestMatchIndex = -1;
         let bestMatchScore = -Infinity;
@@ -904,6 +909,27 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             }
         }
 
+        if (bestMatchIndex !== -1) {
+            if (transToMain.has(bestMatchIndex)) {
+                const prev = transToMain.get(bestMatchIndex)!;
+                if (bestMatchScore > prev.score) {
+                    // Steal the match because this mainSub is a better fit for this translation line!
+                    mainMatches[prev.mainIndex] = -1;
+                    mainMatches[mainIndex] = bestMatchIndex;
+                    transToMain.set(bestMatchIndex, { mainIndex, score: bestMatchScore });
+                }
+            } else {
+                mainMatches[mainIndex] = bestMatchIndex;
+                transToMain.set(bestMatchIndex, { mainIndex, score: bestMatchScore });
+            }
+        }
+    }
+
+    // Now format and build the final merged array using the optimized matches
+    for (let mainIndex = 0; mainIndex < mainSubs.length; mainIndex++) {
+        const mainSub = mainSubs[mainIndex];
+        const bestMatchIndex = mainMatches[mainIndex];
+
         const cleanMainText = sanitizeText(mainSub.text);
         const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
 
@@ -927,6 +953,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             text: mergedText
         });
     }
+
     console.log(`Finished merging. Result: ${mergedSubs.length}/${mainSubs.length} lines merged successfully (${mismatchesCount} mismatches).`);
     return mergedSubs;
 }
