@@ -1008,9 +1008,6 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             mergedText = ('<b>' + entry.flatMainText + '</b>\n<i>> ' + entry.flatTransText + '</i>').trim();
         } else {
             mismatchesCount++;
-            if (!silent) {
-                console.warn(`[Merge Mismatch] No translation matched for: "${entry.flatMainText}" (${entry.mainSub.startTime} --> ${entry.mainSub.endTime})`);
-            }
         }
 
         if (!mergedText) continue;
