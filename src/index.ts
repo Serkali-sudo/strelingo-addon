@@ -942,7 +942,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     }
 
     console.log(`Finished merging. Result: ${mergedSubs.length}/${mainSubs.length} lines merged successfully (${mismatchesCount} mismatches).`);
-    return mergedSubs;}
+    return mergedSubs;
 }
 
 // Formats an array of subtitle objects back into SRT text
