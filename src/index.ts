@@ -780,6 +780,15 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     let transIndex = 0;
     let mismatchesCount = 0;
 
+    interface IntermediateEntry {
+        mainSub: SRTLine;
+        bestMatchIndex: number;
+        flatMainText: string;
+        flatTransText: string | null;
+    }
+
+    const intermediateEntries: IntermediateEntry[] = [];
+
     for (const mainSub of mainSubs) {
         let foundMatch = false;
         let bestMatchIndex = -1;
@@ -920,23 +929,64 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
         const cleanMainText = sanitizeText(mainSub.text);
         const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
 
-        let mergedText = flatMainText;
+        let flatTransText: string | null = null;
         if (bestMatchIndex !== -1) {
             const bestTransSub = transSubs[bestMatchIndex];
             const cleanTransText = sanitizeText(bestTransSub.text);
-            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
-            if (flatTransText) {
-                mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
-            }
+            flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
+        }
+
+        intermediateEntries.push({
+            mainSub: { ...mainSub }, // clone mainSub to prevent mutating original mainSubs array
+            bestMatchIndex,
+            flatMainText,
+            flatTransText
+        });
+    }
+
+    // Clever Combine Pass: Merge consecutive entries sharing the same non-empty translation
+    const combinedEntries: IntermediateEntry[] = [];
+
+    for (const entry of intermediateEntries) {
+        if (combinedEntries.length === 0) {
+            combinedEntries.push(entry);
+            continue;
+        }
+
+        const lastEntry = combinedEntries[combinedEntries.length - 1];
+        const bothMatchSame = (entry.bestMatchIndex !== -1 && entry.bestMatchIndex === lastEntry.bestMatchIndex);
+
+        let smallGap = false;
+        if (bothMatchSame) {
+            const lastEnd = parseTimeToMs(lastEntry.mainSub.endTime);
+            const currentStart = parseTimeToMs(entry.mainSub.startTime);
+            // Only combine if the gap between consecutive entries is less than 2 seconds (2000ms)
+            smallGap = (currentStart - lastEnd < 2000);
+        }
+
+        if (bothMatchSame && smallGap) {
+            // Combine them!
+            lastEntry.mainSub.endTime = entry.mainSub.endTime;
+            lastEntry.flatMainText = (lastEntry.flatMainText + " " + entry.flatMainText).trim();
+        } else {
+            combinedEntries.push(entry);
+        }
+    }
+
+    // Format final entries into SRTLine list
+    for (const entry of combinedEntries) {
+        let mergedText = entry.flatMainText;
+        if (entry.flatTransText) {
+            mergedText = ('<b>' + entry.flatMainText + '</b>\n<i>> ' + entry.flatTransText + '</i>').trim();
         } else {
             mismatchesCount++;
-            console.warn(`[Merge Mismatch] No translation matched for: "${flatMainText}" (${mainSub.startTime} --> ${mainSub.endTime})`);
+            console.warn(`[Merge Mismatch] No translation matched for: "${entry.flatMainText}" (${entry.mainSub.startTime} --> ${entry.mainSub.endTime})`);
         }
 
         if (!mergedText) continue;
 
         mergedSubs.push({
-            ...mainSub,
+            ...entry.mainSub,
             text: mergedText
         });
     }
