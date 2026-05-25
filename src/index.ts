@@ -686,6 +686,8 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
         const mainProperNouns = mainHasLatin ? extractProperNouns(mainClean) : [];
         const mainFeatures = extractSpecialFeatures(mainClean);
 
+        console.log(`[Merge Match] Finding match for Main Sub: "${mainClean.replace(/\r?\n|\r/g, ' ')}" (${mainSub.startTime} -> ${mainSub.endTime})`);
+
         for (let i = transIndex; i < transSubs.length; i++) {
             const transSub = transSubs[i];
 
@@ -706,67 +708,97 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             if (startsOverlap || endsOverlap || isWithin || contains || timeDiff < mergeThresholdMs) {
                 // Compute composite score for language-invariant alignment
                 const baseScore = 1000 - timeDiff;
-                let scoreBoost = 0;
+                let numberBoost = 0;
+                let emojiBoost = 0;
+                let properNounBoost = 0;
+                let featuresBoost = 0;
 
                 const transClean = sanitizeText(transSub.text);
 
                 // 1. Number matching
                 const transNumbers = extractNumbers(transClean);
+                let sharedNumbers: string[] = [];
                 if (mainNumbers.length > 0 && transNumbers.length > 0) {
-                    const sharedNumbers = mainNumbers.filter(n => transNumbers.includes(n));
+                    sharedNumbers = mainNumbers.filter(n => transNumbers.includes(n));
                     if (sharedNumbers.length > 0) {
-                        scoreBoost += 1000;
+                        numberBoost += 1000;
                     } else {
-                        scoreBoost -= 1000;
+                        numberBoost -= 1000;
                     }
                 }
 
                 // 2. Emoji matching
                 const transEmojis = extractEmojis(transClean);
+                let sharedEmojis: string[] = [];
                 if (mainEmojis.length > 0 && transEmojis.length > 0) {
-                    const sharedEmojis = mainEmojis.filter(e => transEmojis.includes(e));
+                    sharedEmojis = mainEmojis.filter(e => transEmojis.includes(e));
                     if (sharedEmojis.length > 0) {
-                        scoreBoost += 500;
+                        emojiBoost += 500;
                     } else {
-                        scoreBoost -= 500;
+                        emojiBoost -= 500;
                     }
                 }
 
                 // 3. Proper Nouns / Capitalized Latin Words matching
                 const transHasLatin = /[a-zA-Z]/.test(transClean);
+                let sharedProperNouns: string[] = [];
                 if (mainHasLatin && transHasLatin) {
                     const transProperNouns = extractProperNouns(transClean);
                     if (mainProperNouns.length > 0 && transProperNouns.length > 0) {
-                        const sharedProperNouns = mainProperNouns.filter(w => 
+                        sharedProperNouns = mainProperNouns.filter(w => 
                             transProperNouns.some(tw => tw.toLowerCase() === w.toLowerCase())
                         );
                         if (sharedProperNouns.length > 0) {
-                            scoreBoost += 300 * sharedProperNouns.length;
+                            properNounBoost += 300 * sharedProperNouns.length;
                         }
                     }
                 }
 
                 // 4. Special punctuation/symbols features matching
                 const transFeatures = extractSpecialFeatures(transClean);
+                let qMatch = false;
                 if (mainFeatures.hasQuestion === transFeatures.hasQuestion) {
-                    scoreBoost += 200; // reward matching structural questions vs statements
+                    featuresBoost += 200; // reward matching structural questions vs statements
+                    qMatch = true;
                 } else {
-                    scoreBoost -= 300; // penalty if mismatching query status
+                    featuresBoost -= 300; // penalty if mismatching query status
                 }
+                let exclMatch = false;
                 if (mainFeatures.hasExclamation && transFeatures.hasExclamation) {
-                    scoreBoost += 200;
+                    featuresBoost += 200;
+                    exclMatch = true;
                 }
+                let ellipsisMatch = false;
                 if (mainFeatures.hasEllipsis && transFeatures.hasEllipsis) {
-                    scoreBoost += 200;
+                    featuresBoost += 200;
+                    ellipsisMatch = true;
                 }
+                let musicMatch = false;
                 if (mainFeatures.hasMusic && transFeatures.hasMusic) {
-                    scoreBoost += 500;
+                    featuresBoost += 500;
+                    musicMatch = true;
                 }
+                let speakerDashMatch = false;
                 if (mainFeatures.hasSpeakerDash && transFeatures.hasSpeakerDash) {
-                    scoreBoost += 300;
+                    featuresBoost += 300;
+                    speakerDashMatch = true;
                 }
 
-                const totalScore = baseScore + scoreBoost;
+                const totalScore = baseScore + numberBoost + emojiBoost + properNounBoost + featuresBoost;
+
+                console.log(`  [Candidate ${i}] "${transClean.replace(/\r?\n|\r/g, ' ').substring(0, 40)}" (${transSub.startTime} -> ${transSub.endTime})`);
+                console.log(`    - Timing Score: ${baseScore} (diff: ${timeDiff}ms)`);
+                if (mainNumbers.length > 0 && transNumbers.length > 0) {
+                    console.log(`    - Numbers Boost: ${numberBoost} (shared: ${JSON.stringify(sharedNumbers)})`);
+                }
+                if (mainEmojis.length > 0 && transEmojis.length > 0) {
+                    console.log(`    - Emojis Boost: ${emojiBoost} (shared: ${JSON.stringify(sharedEmojis)})`);
+                }
+                if (sharedProperNouns.length > 0) {
+                    console.log(`    - Proper Nouns Boost: ${properNounBoost} (shared: ${JSON.stringify(sharedProperNouns)})`);
+                }
+                console.log(`    - Structural Match: Q=${qMatch}, Excl=${exclMatch}, Ellipsis=${ellipsisMatch}, Music=${musicMatch}, SpeakerDash=${speakerDashMatch} (Boost: ${featuresBoost})`);
+                console.log(`    - Total Composite Score: ${totalScore}`);
 
                 if (totalScore > bestMatchScore) {
                     bestMatchScore = totalScore;
@@ -794,7 +826,12 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
             if (flatTransText) {
                 mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
+                console.log(`[Merge Selected] Main: "${flatMainText}" paired with Winner Candidate ${bestMatchIndex}: "${flatTransText}" (Score: ${bestMatchScore})`);
+            } else {
+                console.log(`[Merge Selected] Main: "${flatMainText}" paired with empty Translation Candidate ${bestMatchIndex}`);
             }
+        } else {
+            console.log(`[Merge Mismatch] Main: "${flatMainText}" did not find any matching translation subtitle within time threshold.`);
         }
 
         if (!mergedText) continue;
