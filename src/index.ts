@@ -783,6 +783,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     interface IntermediateEntry {
         mainSub: SRTLine;
         bestMatchIndex: number;
+        matchedIndices: number[];
         flatMainText: string;
         flatTransText: string | null;
     }
@@ -793,6 +794,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
         let foundMatch = false;
         let bestMatchIndex = -1;
         let bestMatchScore = -Infinity;
+        const candidateMatches: { index: number; score: number }[] = [];
 
         if (!mainSub || !mainSub.startTime || !mainSub.endTime) {
             console.warn("Skipping invalid main subtitle entry:", mainSub);
@@ -914,6 +916,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
                     bestMatchScore = totalScore;
                     bestMatchIndex = i;
                 }
+                candidateMatches.push({ index: i, score: totalScore });
                 foundMatch = true;
             } else if (foundMatch && shiftedTransStart > mainEndTime + mergeThresholdMs) {
                 break;
@@ -926,25 +929,44 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             }
         }
 
+        let matchedIndices: number[] = [];
+        if (bestMatchIndex !== -1) {
+            matchedIndices = candidateMatches
+                .filter(m => m.score >= bestMatchScore - 300)
+                .map(m => m.index)
+                .sort((a, b) => a - b);
+        }
+
         const cleanMainText = sanitizeText(mainSub.text);
         const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
 
         let flatTransText: string | null = null;
-        if (bestMatchIndex !== -1) {
-            const bestTransSub = transSubs[bestMatchIndex];
-            const cleanTransText = sanitizeText(bestTransSub.text);
-            flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
+        if (matchedIndices.length > 0) {
+            const uniqueTexts = new Set<string>();
+            const textsList: string[] = [];
+            for (const idx of matchedIndices) {
+                const sub = transSubs[idx];
+                const cleanTrans = sanitizeText(sub.text).replace(/\r?\n|\r/g, ' ').trim();
+                if (cleanTrans && !uniqueTexts.has(cleanTrans)) {
+                    uniqueTexts.add(cleanTrans);
+                    textsList.push(cleanTrans);
+                }
+            }
+            if (textsList.length > 0) {
+                flatTransText = textsList.join(" / ");
+            }
         }
 
         intermediateEntries.push({
             mainSub: { ...mainSub }, // clone mainSub to prevent mutating original mainSubs array
             bestMatchIndex,
+            matchedIndices,
             flatMainText,
             flatTransText
         });
     }
 
-    // Clever Combine Pass: Merge consecutive entries sharing the same non-empty translation
+    // Clever Combine Pass: Merge consecutive entries sharing the same non-empty translation set
     const combinedEntries: IntermediateEntry[] = [];
 
     for (const entry of intermediateEntries) {
@@ -954,7 +976,9 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
         }
 
         const lastEntry = combinedEntries[combinedEntries.length - 1];
-        const bothMatchSame = (entry.bestMatchIndex !== -1 && entry.bestMatchIndex === lastEntry.bestMatchIndex);
+        const bothMatchSame = (entry.matchedIndices.length > 0 &&
+                               lastEntry.matchedIndices.length > 0 &&
+                               JSON.stringify(entry.matchedIndices) === JSON.stringify(lastEntry.matchedIndices));
 
         let smallGap = false;
         if (bothMatchSame) {
