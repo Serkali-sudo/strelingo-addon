@@ -628,7 +628,39 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
     }
 }
 
-// Merges two arrays of parsed subtitles based on time
+// Helper functions for language-invariant feature extraction to improve merge accuracy
+function extractNumbers(cleanText: string): string[] {
+    return cleanText.match(/\d+/g) || [];
+}
+
+function extractEmojis(cleanText: string): string[] {
+    const regex = /[\u{1F300}-\u{1F9FF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu;
+    return cleanText.match(regex) || [];
+}
+
+function extractProperNouns(cleanText: string): string[] {
+    return cleanText.match(/\b[A-Z][a-zA-Z]{3,}\b/g) || [];
+}
+
+interface SpecialFeatures {
+    hasQuestion: boolean;
+    hasExclamation: boolean;
+    hasEllipsis: boolean;
+    hasMusic: boolean;
+    hasSpeakerDash: boolean;
+}
+
+function extractSpecialFeatures(cleanText: string): SpecialFeatures {
+    return {
+        hasQuestion: /[?¿？]/.test(cleanText),
+        hasExclamation: /[!¡！]/.test(cleanText),
+        hasEllipsis: /\.\.\.|…/.test(cleanText),
+        hasMusic: /[♪♫]/.test(cleanText),
+        hasSpeakerDash: /(?:^|\n)\s*-\s/.test(cleanText)
+    };
+}
+
+// Merges two arrays of parsed subtitles based on time and language-invariant signals
 function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
     console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
     const mergedSubs: SRTLine[] = [];
@@ -637,7 +669,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     for (const mainSub of mainSubs) {
         let foundMatch = false;
         let bestMatchIndex = -1;
-        let smallestTimeDiff = Infinity;
+        let bestMatchScore = -Infinity;
 
         if (!mainSub || !mainSub.startTime || !mainSub.endTime) {
             console.warn("Skipping invalid main subtitle entry:", mainSub);
@@ -646,6 +678,13 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
 
         const mainStartTime = parseTimeToMs(mainSub.startTime);
         const mainEndTime = parseTimeToMs(mainSub.endTime);
+
+        const mainClean = sanitizeText(mainSub.text);
+        const mainNumbers = extractNumbers(mainClean);
+        const mainEmojis = extractEmojis(mainClean);
+        const mainHasLatin = /[a-zA-Z]/.test(mainClean);
+        const mainProperNouns = mainHasLatin ? extractProperNouns(mainClean) : [];
+        const mainFeatures = extractSpecialFeatures(mainClean);
 
         for (let i = transIndex; i < transSubs.length; i++) {
             const transSub = transSubs[i];
@@ -665,8 +704,72 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             const timeDiff = Math.abs(mainStartTime - transStartTime);
 
             if (startsOverlap || endsOverlap || isWithin || contains || timeDiff < mergeThresholdMs) {
-                if (timeDiff < smallestTimeDiff) {
-                    smallestTimeDiff = timeDiff;
+                // Compute composite score for language-invariant alignment
+                const baseScore = 1000 - timeDiff;
+                let scoreBoost = 0;
+
+                const transClean = sanitizeText(transSub.text);
+
+                // 1. Number matching
+                const transNumbers = extractNumbers(transClean);
+                if (mainNumbers.length > 0 && transNumbers.length > 0) {
+                    const sharedNumbers = mainNumbers.filter(n => transNumbers.includes(n));
+                    if (sharedNumbers.length > 0) {
+                        scoreBoost += 1000;
+                    } else {
+                        scoreBoost -= 1000;
+                    }
+                }
+
+                // 2. Emoji matching
+                const transEmojis = extractEmojis(transClean);
+                if (mainEmojis.length > 0 && transEmojis.length > 0) {
+                    const sharedEmojis = mainEmojis.filter(e => transEmojis.includes(e));
+                    if (sharedEmojis.length > 0) {
+                        scoreBoost += 500;
+                    } else {
+                        scoreBoost -= 500;
+                    }
+                }
+
+                // 3. Proper Nouns / Capitalized Latin Words matching
+                const transHasLatin = /[a-zA-Z]/.test(transClean);
+                if (mainHasLatin && transHasLatin) {
+                    const transProperNouns = extractProperNouns(transClean);
+                    if (mainProperNouns.length > 0 && transProperNouns.length > 0) {
+                        const sharedProperNouns = mainProperNouns.filter(w => 
+                            transProperNouns.some(tw => tw.toLowerCase() === w.toLowerCase())
+                        );
+                        if (sharedProperNouns.length > 0) {
+                            scoreBoost += 300 * sharedProperNouns.length;
+                        }
+                    }
+                }
+
+                // 4. Special punctuation/symbols features matching
+                const transFeatures = extractSpecialFeatures(transClean);
+                if (mainFeatures.hasQuestion === transFeatures.hasQuestion) {
+                    scoreBoost += 200; // reward matching structural questions vs statements
+                } else {
+                    scoreBoost -= 300; // penalty if mismatching query status
+                }
+                if (mainFeatures.hasExclamation && transFeatures.hasExclamation) {
+                    scoreBoost += 200;
+                }
+                if (mainFeatures.hasEllipsis && transFeatures.hasEllipsis) {
+                    scoreBoost += 200;
+                }
+                if (mainFeatures.hasMusic && transFeatures.hasMusic) {
+                    scoreBoost += 500;
+                }
+                if (mainFeatures.hasSpeakerDash && transFeatures.hasSpeakerDash) {
+                    scoreBoost += 300;
+                }
+
+                const totalScore = baseScore + scoreBoost;
+
+                if (totalScore > bestMatchScore) {
+                    bestMatchScore = totalScore;
                     bestMatchIndex = i;
                 }
                 foundMatch = true;
