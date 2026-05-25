@@ -660,9 +660,122 @@ function extractSpecialFeatures(cleanText: string): SpecialFeatures {
     };
 }
 
+function detectSubtitlesOffset(mainSubs: SRTLine[], transSubs: SRTLine[]): number {
+    const offsets: number[] = [];
+
+    // Map transSubs numbers to their starting times
+    const transNumbersMap = new Map<string, number[]>();
+    for (const sub of transSubs) {
+        if (!sub.startTime || !sub.text) continue;
+        const clean = sanitizeText(sub.text);
+        const nums = extractNumbers(clean);
+        const tStart = parseTimeToMs(sub.startTime);
+        for (const num of nums) {
+            if (!transNumbersMap.has(num)) {
+                transNumbersMap.set(num, []);
+            }
+            transNumbersMap.get(num)!.push(tStart);
+        }
+    }
+
+    // Scan mainSubs and calculate offsets based on matching numbers
+    for (const sub of mainSubs) {
+        if (!sub.startTime || !sub.text) continue;
+        const clean = sanitizeText(sub.text);
+        const nums = extractNumbers(clean);
+        const mStart = parseTimeToMs(sub.startTime);
+        for (const num of nums) {
+            const transStarts = transNumbersMap.get(num);
+            if (transStarts) {
+                for (const tStart of transStarts) {
+                    const diff = mStart - tStart;
+                    // Ignore extreme offsets (e.g. greater than 2 minutes)
+                    if (Math.abs(diff) < 120000) {
+                        offsets.push(diff);
+                    }
+                }
+            }
+        }
+    }
+
+    // Try proper nouns if we have very few number-based offset matches
+    if (offsets.length < 3) {
+        const transNounsMap = new Map<string, number[]>();
+        for (const sub of transSubs) {
+            if (!sub.startTime || !sub.text) continue;
+            const clean = sanitizeText(sub.text);
+            const hasLatin = /[a-zA-Z]/.test(clean);
+            if (!hasLatin) continue;
+            const nouns = extractProperNouns(clean);
+            const tStart = parseTimeToMs(sub.startTime);
+            for (const noun of nouns) {
+                const lower = noun.toLowerCase();
+                if (!transNounsMap.has(lower)) {
+                    transNounsMap.set(lower, []);
+                }
+                transNounsMap.get(lower)!.push(tStart);
+            }
+        }
+
+        for (const sub of mainSubs) {
+            if (!sub.startTime || !sub.text) continue;
+            const clean = sanitizeText(sub.text);
+            const hasLatin = /[a-zA-Z]/.test(clean);
+            if (!hasLatin) continue;
+            const nouns = extractProperNouns(clean);
+            const mStart = parseTimeToMs(sub.startTime);
+            for (const noun of nouns) {
+                const lower = noun.toLowerCase();
+                const transStarts = transNounsMap.get(lower);
+                if (transStarts) {
+                    for (const tStart of transStarts) {
+                        const diff = mStart - tStart;
+                        if (Math.abs(diff) < 120000) {
+                            offsets.push(diff);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (offsets.length === 0) {
+        return 0;
+    }
+
+    // Find the offset cluster with highest consensus (within 1.5 seconds)
+    let bestOffset = 0;
+    let maxClusterCount = 0;
+
+    const limitedOffsets = offsets.slice(0, 1000);
+    for (const offset of limitedOffsets) {
+        let count = 0;
+        let sum = 0;
+        for (const other of limitedOffsets) {
+            if (Math.abs(other - offset) < 1500) {
+                count++;
+                sum += other;
+            }
+        }
+        if (count > maxClusterCount) {
+            maxClusterCount = count;
+            bestOffset = sum / count;
+        }
+    }
+
+    // Minimum cluster confidence of 2 matches
+    if (maxClusterCount >= 2) {
+        console.log(`[Merge Offset] Detected constant timing offset: ${bestOffset.toFixed(0)}ms (confidence: ${maxClusterCount})`);
+        return bestOffset;
+    }
+
+    return 0;
+}
+
 // Merges two arrays of parsed subtitles based on time and language-invariant signals
 function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
-    console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
+    const globalOffsetShift = detectSubtitlesOffset(mainSubs, transSubs);
+    console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs (Threshold: ${mergeThresholdMs}ms, Shift: ${globalOffsetShift.toFixed(0)}ms).`);
     const mergedSubs: SRTLine[] = [];
     let transIndex = 0;
     let mismatchesCount = 0;
@@ -698,11 +811,14 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             const transStartTime = parseTimeToMs(transSub.startTime);
             const transEndTime = parseTimeToMs(transSub.endTime);
 
-            const startsOverlap = (transStartTime >= mainStartTime && transStartTime < mainEndTime);
-            const endsOverlap = (transEndTime > mainStartTime && transEndTime <= mainEndTime);
-            const isWithin = (transStartTime >= mainStartTime && transEndTime <= mainEndTime);
-            const contains = (transStartTime < mainStartTime && transEndTime > mainEndTime);
-            const timeDiff = Math.abs(mainStartTime - transStartTime);
+            const shiftedTransStart = transStartTime + globalOffsetShift;
+            const shiftedTransEnd = transEndTime + globalOffsetShift;
+
+            const startsOverlap = (shiftedTransStart >= mainStartTime && shiftedTransStart < mainEndTime);
+            const endsOverlap = (shiftedTransEnd > mainStartTime && shiftedTransEnd <= mainEndTime);
+            const isWithin = (shiftedTransStart >= mainStartTime && shiftedTransEnd <= mainEndTime);
+            const contains = (shiftedTransStart < mainStartTime && shiftedTransEnd > mainEndTime);
+            const timeDiff = Math.abs(mainStartTime - shiftedTransStart);
 
             if (startsOverlap || endsOverlap || isWithin || contains || timeDiff < mergeThresholdMs) {
                 // Compute composite score for language-invariant alignment
@@ -777,13 +893,13 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
                     bestMatchIndex = i;
                 }
                 foundMatch = true;
-            } else if (foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
+            } else if (foundMatch && shiftedTransStart > mainEndTime + mergeThresholdMs) {
                 break;
-            } else if (!foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
+            } else if (!foundMatch && shiftedTransStart > mainEndTime + mergeThresholdMs) {
                 break;
             }
 
-            if (transEndTime < mainStartTime - mergeThresholdMs * 2 && i === transIndex) {
+            if (shiftedTransEnd < mainStartTime - mergeThresholdMs * 2 && i === transIndex) {
                 transIndex = i + 1;
             }
         }
