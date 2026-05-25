@@ -665,6 +665,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
     console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
     const mergedSubs: SRTLine[] = [];
     let transIndex = 0;
+    let mismatchesCount = 0;
 
     for (const mainSub of mainSubs) {
         let foundMatch = false;
@@ -797,12 +798,10 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
             if (flatTransText) {
                 mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
-                console.log(`[Merge] "${flatMainText}" -> "${flatTransText}" (Score: ${bestMatchScore})`);
-            } else {
-                console.log(`[Merge] "${flatMainText}" paired with empty Translation Candidate ${bestMatchIndex}`);
             }
         } else {
-            console.log(`[Merge Mismatch] "${flatMainText}" (No match found within time threshold)`);
+            mismatchesCount++;
+            console.warn(`[Merge Mismatch] No translation matched for: "${flatMainText}" (${mainSub.startTime} --> ${mainSub.endTime})`);
         }
 
         if (!mergedText) continue;
@@ -812,7 +811,7 @@ function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThreshol
             text: mergedText
         });
     }
-    console.log(`Finished merging. Result has ${mergedSubs.length} entries.`);
+    console.log(`Finished merging. Result: ${mergedSubs.length}/${mainSubs.length} lines merged successfully (${mismatchesCount} mismatches).`);
     return mergedSubs;
 }
 
