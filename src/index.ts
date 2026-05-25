@@ -1448,6 +1448,60 @@ async function handleSubtitlesRequest(c: any) {
             transSubInfoList = await sortByFilenameMatch(transSubInfoList, videoParams.filename);
         }
 
+        const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
+
+        if (directServingEnabled) {
+            console.log(`Direct serving enabled! Instantly generating edge-serving URL on search without downloading or parsing subtitles.`);
+            const workerUrl = `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+            
+            // Get the best main subtitle info (the top candidate after sorting)
+            const mainSubInfo = mainSubInfoList[0];
+            
+            // Get the top 3 sorted translation candidates
+            const candidatesToEvaluate = transSubInfoList.slice(0, 3);
+            
+            const paramsObj = {
+                mainUrl: mainSubInfo.url,
+                mainFormat: mainSubInfo.format || 'srt',
+                mainLang: mainSubInfo.lang || mainLang || 'eng',
+                // Keep transUrl/transFormat/transLang for backward compatibility or simple serves:
+                transUrl: candidatesToEvaluate[0].url,
+                transFormat: candidatesToEvaluate[0].format || 'srt',
+                transLang: candidatesToEvaluate[0].lang || transLang || 'eng',
+                // Pass list of candidates for direct-serve side evaluation:
+                transCandidates: candidatesToEvaluate.map(candidate => ({
+                    url: candidate.url,
+                    format: candidate.format || 'srt',
+                    lang: candidate.lang || transLang || 'eng',
+                    id: candidate.id
+                }))
+            };
+
+            const encodedData = encodeBase64UrlSafe(JSON.stringify(paramsObj));
+            const srtFileName = type === 'series' && season && episode
+                ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
+                : `${imdbId}_${mainLang}_${transLang}.srt`;
+            const uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
+            const subtitleEntryId = `merged-${mainSubInfo.id}-${candidatesToEvaluate[0].id}-direct`;
+
+            const readableLang = `${languageMap[mainLang as keyof typeof languageMap] || mainLang}+${languageMap[transLang as keyof typeof languageMap] || transLang}`;
+            const finalSubtitles = [{
+                id: subtitleEntryId,
+                url: uploadUrl,
+                lang: readableLang,
+                label: readableLang
+            }];
+
+            const successResponse = c.json({
+                subtitles: finalSubtitles,
+                cacheMaxAge: 6 * 3600,
+                staleRevalidate: 24 * 3600
+            }, 200, {
+                'Cache-Control': 'public, max-age=21600, s-maxage=21600, stale-while-revalidate=86400',
+            });
+            putCachedResponse(cacheKey, successResponse, c.executionCtx);
+            return successResponse;
+        }
 
         let selectedMainSubInfo: SubtitleInfo | null = null;
         let mainParsed: SRTLine[] | null = null;
@@ -1545,107 +1599,84 @@ async function handleSubtitlesRequest(c: any) {
             let uploadUrl: string | null = null;
             let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${bestTransSubInfo.id}`;
 
-            const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
+            console.log(`Formatting merged SRT for selected winner...`);
+            const mergedSrtString = formatSrt(bestMergedParsed);
+            if (mergedSrtString) {
+                if (!skipVercelBlob) {
+                    console.log(`Attempting Vercel Blob upload for best candidate...`);
+                    try {
+                        const blobFileName = type === 'series' && season && episode
+                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
+                            : `${imdbId}_${mainLang}_${transLang}.srt`;
 
-            if (directServingEnabled) {
-                console.log(`Direct serving enabled! Generating edge-serving URL for selected winner candidate...`);
-                const workerUrl = `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
-
-                const paramsObj = {
-                    mainUrl: selectedMainSubInfo.url,
-                    mainFormat: selectedMainSubInfo.format || 'srt',
-                    mainLang: selectedMainSubInfo.lang || mainLang || 'eng',
-                    transUrl: bestTransSubInfo.url,
-                    transFormat: bestTransSubInfo.format || 'srt',
-                    transLang: bestTransSubInfo.lang || transLang || 'eng'
-                };
-
-                const encodedData = encodeBase64UrlSafe(JSON.stringify(paramsObj));
-                const srtFileName = type === 'series' && season && episode
-                    ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
-                    : `${imdbId}_${mainLang}_${transLang}.srt`;
-                uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
-                subtitleEntryId += '-direct';
-            } else {
-                console.log(`Formatting merged SRT for selected winner...`);
-                const mergedSrtString = formatSrt(bestMergedParsed);
-                if (mergedSrtString) {
-                    if (!skipVercelBlob) {
-                        console.log(`Attempting Vercel Blob upload for best candidate...`);
-                        try {
-                            const blobFileName = type === 'series' && season && episode
-                                ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
-                                : `${imdbId}_${mainLang}_${transLang}.srt`;
-
-                            const { url } = await put(
-                                blobFileName,
-                                mergedSrtString,
-                                { access: 'public', addRandomSuffix: true }
-                            );
-                            console.log(`Uploaded best candidate to Vercel Blob: ${url}`);
-                            uploadUrl = url;
-                            subtitleEntryId += '-vercel';
-                        } catch (e: any) {
-                            console.error(`Failed to upload merged SRT to Vercel Blob: ${e.message}`);
-                        }
+                        const { url } = await put(
+                            blobFileName,
+                            mergedSrtString,
+                            { access: 'public', addRandomSuffix: true }
+                        );
+                        console.log(`Uploaded best candidate to Vercel Blob: ${url}`);
+                        uploadUrl = url;
+                        subtitleEntryId += '-vercel';
+                    } catch (e: any) {
+                        console.error(`Failed to upload merged SRT to Vercel Blob: ${e.message}`);
                     }
+                }
 
-                    if (!uploadUrl && supabase) {
-                        console.log(`Attempting Supabase Storage upload for best candidate...`);
-                        try {
-                            const supabaseFileName = type === 'series' && season && episode
-                                ? `${imdbId}/S${season}E${episode}_${mainLang}_${transLang}.srt`
-                                : `${imdbId}/${mainLang}_${transLang}.srt`;
+                if (!uploadUrl && supabase) {
+                    console.log(`Attempting Supabase Storage upload for best candidate...`);
+                    try {
+                        const supabaseFileName = type === 'series' && season && episode
+                            ? `${imdbId}/S${season}E${episode}_${mainLang}_${transLang}.srt`
+                            : `${imdbId}/${mainLang}_${transLang}.srt`;
 
-                            const { error: supabaseError } = await supabase
-                                .storage
-                                .from('subtitles')
-                                .upload(supabaseFileName, mergedSrtString, {
-                                    cacheControl: '3600',
-                                    upsert: true,
-                                    contentType: 'text/srt; charset=utf-8'
-                                });
+                        const { error: supabaseError } = await supabase
+                            .storage
+                            .from('subtitles')
+                            .upload(supabaseFileName, mergedSrtString, {
+                                cacheControl: '3600',
+                                upsert: true,
+                                contentType: 'text/srt; charset=utf-8'
+                            });
 
-                            if (supabaseError) throw supabaseError;
+                        if (supabaseError) throw supabaseError;
 
-                            const { data: publicUrlData } = supabase
-                                .storage
-                                .from('subtitles')
-                                .getPublicUrl(supabaseFileName);
+                        const { data: publicUrlData } = supabase
+                            .storage
+                            .from('subtitles')
+                            .getPublicUrl(supabaseFileName);
 
-                            if (!publicUrlData || !publicUrlData.publicUrl) {
-                                console.error(`Supabase upload successful, but failed to get public URL.`);
-                            } else {
-                                uploadUrl = publicUrlData.publicUrl;
-                                console.log(`Uploaded best candidate to Supabase: ${uploadUrl}`);
-                                subtitleEntryId += '-supabase';
-                            }
-                        } catch (e: any) {
-                            console.error(`Supabase Storage upload failed: ${e.message}`);
+                        if (!publicUrlData || !publicUrlData.publicUrl) {
+                            console.error(`Supabase upload successful, but failed to get public URL.`);
+                        } else {
+                            uploadUrl = publicUrlData.publicUrl;
+                            console.log(`Uploaded best candidate to Supabase: ${uploadUrl}`);
+                            subtitleEntryId += '-supabase';
                         }
+                    } catch (e: any) {
+                        console.error(`Supabase Storage upload failed: ${e.message}`);
                     }
+                }
 
-                    const localStorageDir = getEnvVar(c, 'LOCAL_STORAGE_DIR');
-                    const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+                const localStorageDir = getEnvVar(c, 'LOCAL_STORAGE_DIR');
+                const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
 
-                    if (!uploadUrl && localStorageDir) {
-                        console.log(`Attempting Local Storage upload for best candidate...`);
-                        try {
-                            await fs.mkdir(localStorageDir, { recursive: true });
+                if (!uploadUrl && localStorageDir) {
+                    console.log(`Attempting Local Storage upload for best candidate...`);
+                    try {
+                        await fs.mkdir(localStorageDir, { recursive: true });
 
-                            const localFileName = type === 'series' && season && episode
-                                ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
-                                : `${imdbId}_${mainLang}_${transLang}.srt`;
-                            const localFilePath = path.join(localStorageDir, localFileName);
+                        const localFileName = type === 'series' && season && episode
+                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}.srt`
+                            : `${imdbId}_${mainLang}_${transLang}.srt`;
+                        const localFilePath = path.join(localStorageDir, localFileName);
 
-                            await fs.writeFile(localFilePath, mergedSrtString, 'utf-8');
+                        await fs.writeFile(localFilePath, mergedSrtString, 'utf-8');
 
-                            uploadUrl = `${externalUrl}/subtitles/${localFileName}`;
-                            console.log(`Uploaded best candidate to Local Storage: ${uploadUrl}`);
-                            subtitleEntryId += '-local';
-                        } catch (e: any) {
-                            console.warn(`Local Storage write failed: ${e.message}`);
-                        }
+                        uploadUrl = `${externalUrl}/subtitles/${localFileName}`;
+                        console.log(`Uploaded best candidate to Local Storage: ${uploadUrl}`);
+                        subtitleEntryId += '-local';
+                    } catch (e: any) {
+                        console.warn(`Local Storage write failed: ${e.message}`);
                     }
                 }
             }
@@ -1710,12 +1741,13 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
         const transUrl = params.transUrl;
         const transFormat = params.transFormat || 'srt';
         const transLang = params.transLang || 'eng';
+        const transCandidates = params.transCandidates;
 
-        if (!mainUrl || !transUrl) {
+        if (!mainUrl || (!transUrl && (!transCandidates || transCandidates.length === 0))) {
             return c.text('Missing required subtitle URLs inside payload', 400);
         }
 
-        console.log(`Direct subtitle serve request. Main: ${mainUrl}, Trans: ${transUrl}`);
+        console.log(`Direct subtitle serve request. Main: ${mainUrl}`);
 
         const mainSubContent = await fetchSubtitleContent(mainUrl, mainFormat, mainLang);
 
@@ -1723,13 +1755,64 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
         const mainParsed = parseSrt(mainSubContent);
         if (!mainParsed) throw new Error("Failed to parse main subtitle");
 
-        const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
+        let bestTransParsed: SRTLine[] | null = null;
+        let selectedTransId = '';
 
-        if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
-        const transParsed = parseSrt(transSubContent);
-        if (!transParsed) throw new Error("Failed to parse translation subtitle");
+        if (Array.isArray(transCandidates) && transCandidates.length > 0) {
+            console.log(`Evaluating ${transCandidates.length} translation candidates on direct-serve route...`);
+            const fetchedCandidates = await Promise.all(
+                transCandidates.map(async (info: any) => {
+                    try {
+                        const content = await fetchSubtitleContent(info.url, info.format, info.lang);
+                        if (!content) return null;
+                        const parsed = parseSrt(content);
+                        if (!parsed || parsed.length === 0) return null;
+                        return { info, parsed };
+                    } catch (e: any) {
+                        console.error(`Failed to fetch/parse candidate ${info.id}:`, e.message);
+                        return null;
+                    }
+                })
+            );
 
-        const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
+            const validCandidates = fetchedCandidates.filter((cand): cand is { info: any; parsed: SRTLine[] } => cand !== null);
+
+            if (validCandidates.length === 1) {
+                const candidate = validCandidates[0];
+                console.log(`Only 1 translation candidate available (ID=${candidate.info.id}).`);
+                bestTransParsed = candidate.parsed;
+                selectedTransId = candidate.info.id;
+            } else if (validCandidates.length > 1) {
+                let lowestMismatchRate = Infinity;
+                const mainSlice = mainParsed.slice(0, 150);
+
+                for (const candidate of validCandidates) {
+                    const mergedSlice = mergeSubtitles(mainSlice, candidate.parsed, 500, true);
+                    const mismatches = mergedSlice.filter(line => !line.text.includes("<i>> ")).length;
+                    const mismatchRate = mismatches / Math.max(1, mergedSlice.length);
+                    console.log(`[Direct Merge Evaluation] Candidate ID=${candidate.info.id} (dry-run on ${mergedSlice.length} lines): ${mismatches} mismatches (rate: ${(mismatchRate * 100).toFixed(1)}%).`);
+
+                    if (mismatchRate < lowestMismatchRate) {
+                        lowestMismatchRate = mismatchRate;
+                        bestTransParsed = candidate.parsed;
+                        selectedTransId = candidate.info.id;
+                    }
+                }
+            }
+        }
+
+        if (!bestTransParsed && transUrl) {
+            console.log(`Using fallback direct translation subtitle: ${transUrl}`);
+            const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
+            if (transSubContent) {
+                bestTransParsed = parseSrt(transSubContent);
+            }
+        }
+
+        if (!bestTransParsed) throw new Error("Failed to fetch or evaluate any translation subtitle");
+
+        console.log(`Running full merge on direct-serve route (selected translation: ${selectedTransId || 'fallback'})...`);
+        const mergedParsed = mergeSubtitles([...mainParsed], bestTransParsed, 500, false);
         if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
 
         const mergedSrtString = formatSrt(mergedParsed);
