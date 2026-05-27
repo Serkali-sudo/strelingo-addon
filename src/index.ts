@@ -11,6 +11,12 @@ import { Buffer } from 'node:buffer';
 
 import landingTemplate, { Manifest } from './landingTemplate';
 import { decodeSubtitleBuffer, getLanguageAliases } from './encoding';
+import {
+    mergeSubtitlesByTime,
+    rankSubtitleCandidates,
+    type SubtitleCandidate,
+    type SubtitleCue
+} from './subtitleMatching';
 
 // Cache for dynamically resolved languages map
 const languageMap = {
@@ -54,23 +60,9 @@ const browserLanguageMap: Record<string, string> = {
 
 const languageOptions = Object.entries(languageMap).map(([code, name]) => `${name} [${code}]`);
 
-interface SubtitleInfo {
-    id: string | number;
-    url: string;
-    lang: string;
-    format: string;
-    langName: string;
-    releaseName: string;
-    rating: number;
-    g: number;
-}
+interface SubtitleInfo extends SubtitleCandidate {}
 
-interface SRTLine {
-    id: string;
-    startTime: string;
-    endTime: string;
-    text: string;
-}
+interface SRTLine extends SubtitleCue {}
 
 // --------------------------------------------------------------------------------------
 // INTERNAL SUBTITLE CONVERTER (Ported flawlessly from subsrt & subtitle-converter)
@@ -360,35 +352,6 @@ function stripJsonExtension(str: string | undefined): string {
     return str;
 }
 
-// Functionally perfectly matches sanitize-html behavior for extracting just the raw text
-function sanitizeText(text: string): string {
-    if (!text) return '';
-    text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/\{[^}]*\}/g, '');
-    text = text.replace(/&nbsp;/gi, ' ')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, "'")
-        .replace(/&lt;/gi, '<')
-        .replace(/&gt;/gi, '>')
-        .replace(/&amp;/gi, '&');
-    return text.trim();
-}
-
-
-function parseTimeToMs(timeString: string): number {
-    if (!timeString || !/\d{2}:\d{2}:\d{2},\d{3}/.test(timeString)) {
-        console.error(`Invalid time format encountered: ${timeString}`);
-        return 0;
-    }
-    const parts = timeString.split(':');
-    const secondsParts = parts[2].split(',');
-    const hours = parseInt(parts[0], 10);
-    const minutes = parseInt(parts[1], 10);
-    const seconds = parseInt(secondsParts[0], 10);
-    const milliseconds = parseInt(secondsParts[1], 10);
-    return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
-}
-
 function makeCacheKey(url: string): Request | null {
     try {
         const normalizedUrl = new URL(url);
@@ -425,20 +388,6 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
     }
 }
 
-function tokenizeFilename(filename: string): string[] {
-    const name = filename.replace(/\.[^.]+$/, '').toLowerCase();
-    return name.split(/[.\-_\s]+/).filter(t => t.length > 1);
-}
-
-function scoreFilenameMatch(subTokens: string[], videoTokens: string[]): number {
-    const videoSet = new Set(videoTokens);
-    let score = 0;
-    for (const token of subTokens) {
-        if (videoSet.has(token)) score++;
-    }
-    return score;
-}
-
 async function fetchSubtitleFilename(url: string): Promise<string | null> {
     try {
         const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
@@ -451,19 +400,24 @@ async function fetchSubtitleFilename(url: string): Promise<string | null> {
     }
 }
 
-async function sortByFilenameMatch(subList: SubtitleInfo[], videoFilename: string): Promise<SubtitleInfo[]> {
-    const videoTokens = tokenizeFilename(videoFilename);
-    const scored = await Promise.all(
-        subList.map(async (sub) => {
-            const subFilename = await fetchSubtitleFilename(sub.url);
-            const subTokens = subFilename ? tokenizeFilename(subFilename) : [];
-            const score = scoreFilenameMatch(subTokens, videoTokens);
-            if (subFilename) console.log(`Subtitle ID=${sub.id} filename: ${subFilename} score: ${score}`);
-            return { sub, score };
-        })
-    );
-    scored.sort((a, b) => b.score - a.score);
-    return scored.map(s => s.sub);
+async function rankSubtitleInfoList(subList: SubtitleInfo[], videoFilename?: string): Promise<SubtitleInfo[]> {
+    const ranked = await rankSubtitleCandidates(subList, {
+        videoFilename,
+        fetchSubtitleFilename
+    });
+
+    for (const candidate of ranked.slice(0, 5)) {
+        const details = [
+            `score=${candidate.score}`,
+            `filenameScore=${candidate.filenameScore}`,
+            `weakPenalty=${candidate.weakVariantPenalty}`,
+            `g=${candidate.providerScore}`
+        ].join(' ');
+        const filename = candidate.filename ? ` filename=${candidate.filename}` : '';
+        console.log(`Ranked subtitle ID=${candidate.sub.id} ${details}${filename}`);
+    }
+
+    return ranked.map(candidate => candidate.sub);
 }
 
 // Fetch all subtitles using standard web fetch (axios-free)
@@ -631,76 +585,7 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
 // Merges two arrays of parsed subtitles based on time
 function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
     console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
-    const mergedSubs: SRTLine[] = [];
-    let transIndex = 0;
-
-    for (const mainSub of mainSubs) {
-        let foundMatch = false;
-        let bestMatchIndex = -1;
-        let smallestTimeDiff = Infinity;
-
-        if (!mainSub || !mainSub.startTime || !mainSub.endTime) {
-            console.warn("Skipping invalid main subtitle entry:", mainSub);
-            continue;
-        }
-
-        const mainStartTime = parseTimeToMs(mainSub.startTime);
-        const mainEndTime = parseTimeToMs(mainSub.endTime);
-
-        for (let i = transIndex; i < transSubs.length; i++) {
-            const transSub = transSubs[i];
-
-            if (!transSub || !transSub.startTime || !transSub.endTime) {
-                console.warn("Skipping invalid translation subtitle entry:", transSub);
-                continue;
-            }
-
-            const transStartTime = parseTimeToMs(transSub.startTime);
-            const transEndTime = parseTimeToMs(transSub.endTime);
-
-            const startsOverlap = (transStartTime >= mainStartTime && transStartTime < mainEndTime);
-            const endsOverlap = (transEndTime > mainStartTime && transEndTime <= mainEndTime);
-            const isWithin = (transStartTime >= mainStartTime && transEndTime <= mainEndTime);
-            const contains = (transStartTime < mainStartTime && transEndTime > mainEndTime);
-            const timeDiff = Math.abs(mainStartTime - transStartTime);
-
-            if (startsOverlap || endsOverlap || isWithin || contains || timeDiff < mergeThresholdMs) {
-                if (timeDiff < smallestTimeDiff) {
-                    smallestTimeDiff = timeDiff;
-                    bestMatchIndex = i;
-                }
-                foundMatch = true;
-            } else if (foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
-                break;
-            } else if (!foundMatch && transStartTime > mainEndTime + mergeThresholdMs) {
-                break;
-            }
-
-            if (transEndTime < mainStartTime - mergeThresholdMs * 2 && i === transIndex) {
-                transIndex = i + 1;
-            }
-        }
-
-        const cleanMainText = sanitizeText(mainSub.text);
-        const flatMainText = cleanMainText.replace(/\r?\n|\r/g, ' ').trim();
-
-        let mergedText = flatMainText;
-        if (bestMatchIndex !== -1) {
-            const bestTransSub = transSubs[bestMatchIndex];
-            const cleanTransText = sanitizeText(bestTransSub.text);
-            const flatTransText = cleanTransText.replace(/\r?\n|\r/g, ' ').trim();
-            if (flatTransText) {
-                mergedText = ('<b>' + flatMainText + '</b>\n<i>> ' + flatTransText + '</i>').trim();
-            }
-        }
-
-        if (!mergedText) continue;
-
-        mergedSubs.push({
-            ...mainSub,
-            text: mergedText
-        });
-    }
+    const mergedSubs = mergeSubtitlesByTime(mainSubs, transSubs, mergeThresholdMs);
     console.log(`Finished merging. Result has ${mergedSubs.length} entries.`);
     return mergedSubs;
 }
@@ -1117,14 +1002,11 @@ async function handleSubtitlesRequest(c: any) {
             return res;
         }
 
-        if (videoParams.filename) {
-            console.log(`Sorting main subtitles by filename match with: ${videoParams.filename}`);
-            mainSubInfoList = await sortByFilenameMatch(mainSubInfoList, videoParams.filename);
-        }
-        if (videoParams.filename) {
-            console.log(`Sorting translation subtitles by filename match with: ${videoParams.filename}`);
-            transSubInfoList = await sortByFilenameMatch(transSubInfoList, videoParams.filename);
-        }
+        console.log(`Ranking main subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
+        mainSubInfoList = await rankSubtitleInfoList(mainSubInfoList, videoParams.filename);
+
+        console.log(`Ranking translation subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
+        transSubInfoList = await rankSubtitleInfoList(transSubInfoList, videoParams.filename);
 
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
