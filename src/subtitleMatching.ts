@@ -97,6 +97,11 @@ const RELEASE_TOKENS = new Set([
     'dts'
 ]);
 
+const MAX_OFFSET_SAMPLE_SIZE = 160;
+const MAX_AUTO_OFFSET_MS = 15000;
+const OFFSET_CONFIDENCE_WINDOW_MS = 750;
+const MIN_OFFSET_CONFIDENCE = 0.6;
+
 export function sanitizeSubtitleText(text: string): string {
     if (!text) return '';
     return text
@@ -131,7 +136,11 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
     mergeThresholdMs = 500
 ): T[] {
     const mainTimed = buildTimedCues(mainSubs);
-    const transTimed = buildTimedCues(transSubs);
+    const rawTransTimed = buildTimedCues(transSubs);
+    const estimatedOffsetMs = estimateSubtitleOffsetMs(mainTimed, rawTransTimed);
+    const transTimed = estimatedOffsetMs === 0
+        ? rawTransTimed
+        : shiftTimedCues(rawTransTimed, -estimatedOffsetMs);
     const mergedSubs: T[] = [];
     let transCursor = 0;
 
@@ -196,6 +205,44 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
     }
 
     return mergedSubs;
+}
+
+function estimateSubtitleOffsetMs<T extends SubtitleCue>(
+    mainTimed: Array<TimedCue<T>>,
+    transTimed: Array<TimedCue<T>>
+): number {
+    if (mainTimed.length < 3 || transTimed.length < 3) return 0;
+
+    const sampleCount = Math.min(MAX_OFFSET_SAMPLE_SIZE, mainTimed.length, transTimed.length);
+    const deltas: number[] = [];
+
+    for (let i = 0; i < sampleCount; i++) {
+        const mainIndex = sampleIndex(i, sampleCount, mainTimed.length);
+        const transIndex = sampleIndex(i, sampleCount, transTimed.length);
+        const mainCue = mainTimed[mainIndex];
+        const transCue = transTimed[transIndex];
+
+        const durationRatio = Math.min(mainCue.durationMs, transCue.durationMs) / Math.max(mainCue.durationMs, transCue.durationMs);
+        if (durationRatio < 0.25) continue;
+
+        const delta = transCue.startMs - mainCue.startMs;
+        if (Math.abs(delta) <= MAX_AUTO_OFFSET_MS) {
+            deltas.push(delta);
+        }
+    }
+
+    if (deltas.length < 3) return 0;
+
+    deltas.sort((a, b) => a - b);
+    const median = deltas[Math.floor(deltas.length / 2)];
+    const confidentSamples = deltas.filter(delta => Math.abs(delta - median) <= OFFSET_CONFIDENCE_WINDOW_MS).length;
+    const confidence = confidentSamples / deltas.length;
+
+    if (confidence < MIN_OFFSET_CONFIDENCE) return 0;
+
+    return Math.abs(median) > OFFSET_CONFIDENCE_WINDOW_MS
+        ? Math.round(median)
+        : 0;
 }
 
 export async function rankSubtitleCandidates<T extends SubtitleCandidate>(
@@ -296,6 +343,20 @@ function buildTimedCues<T extends SubtitleCue>(subs: T[]): Array<TimedCue<T>> {
     }
 
     return timed;
+}
+
+function shiftTimedCues<T extends SubtitleCue>(timedCues: Array<TimedCue<T>>, offsetMs: number): Array<TimedCue<T>> {
+    return timedCues.map(cue => ({
+        ...cue,
+        startMs: cue.startMs + offsetMs,
+        endMs: cue.endMs + offsetMs,
+        midMs: cue.midMs + offsetMs
+    }));
+}
+
+function sampleIndex(sampleNumber: number, sampleCount: number, itemCount: number): number {
+    if (sampleCount <= 1 || itemCount <= 1) return 0;
+    return Math.round(sampleNumber * (itemCount - 1) / (sampleCount - 1));
 }
 
 function scoreTimeMatch<T extends SubtitleCue>(mainCue: TimedCue<T>, transCue: TimedCue<T>): MatchCandidate<T> {

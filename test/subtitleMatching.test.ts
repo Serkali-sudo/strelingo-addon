@@ -41,6 +41,25 @@ const cue = (id, startTime, endTime, text) => ({ id, startTime, endTime, text })
 }
 
 {
+    const merged = mergeSubtitlesByTime(
+        [
+            cue('1', '00:00:10,000', '00:00:12,000', 'First'),
+            cue('2', '00:00:20,000', '00:00:22,000', 'Second'),
+            cue('3', '00:00:30,000', '00:00:32,000', 'Third')
+        ],
+        [
+            cue('1', '00:00:12,500', '00:00:14,500', 'Uno'),
+            cue('2', '00:00:22,500', '00:00:24,500', 'Dos'),
+            cue('3', '00:00:32,500', '00:00:34,500', 'Tres')
+        ]
+    );
+
+    assert.equal(merged[0].text, '<b>First</b>\n<i>> Uno</i>');
+    assert.equal(merged[1].text, '<b>Second</b>\n<i>> Dos</i>');
+    assert.equal(merged[2].text, '<b>Third</b>\n<i>> Tres</i>');
+}
+
+{
     const ranked = await rankSubtitleCandidates([
         { id: 1, url: 'https://subs.example/one.srt', lang: 'eng', format: 'srt', langName: 'English', releaseName: '', rating: 0, g: 0 },
         { id: 2, url: 'https://subs.example/two.srt', lang: 'eng', format: 'srt', langName: 'English', releaseName: '', rating: 0, g: 0 }
