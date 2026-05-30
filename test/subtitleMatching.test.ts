@@ -75,6 +75,20 @@ const cue = (id, startTime, endTime, text) => ({ id, startTime, endTime, text })
 }
 
 {
+    const ranked = await rankSubtitleCandidates([
+        { id: 1, url: 'https://subs.example/popular.srt', lang: 'eng', format: 'srt', langName: 'English', releaseName: '', rating: 0, g: 100000 },
+        { id: 2, url: 'https://subs.example/matching.srt', lang: 'eng', format: 'srt', langName: 'English', releaseName: '', rating: 0, g: 0 }
+    ], {
+        videoFilename: 'Movie.Name.2024.1080p.WEB-DL.x265.mkv',
+        fetchSubtitleFilename: async url => url.includes('matching')
+            ? 'Movie.Name.2024.WEB-DL.x265.srt'
+            : 'Movie.Name.2024.1080p.BluRay.x264.srt'
+    });
+
+    assert.equal(ranked[0].sub.id, 2);
+}
+
+{
     assert.equal(
         sanitizeSubtitleText('[laughing]\nMATT: You saw that?\n(laughing)\nMATT SMITH: Yeah.'),
         'You saw that? Yeah.'

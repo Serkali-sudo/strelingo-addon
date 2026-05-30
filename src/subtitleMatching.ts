@@ -82,7 +82,11 @@ const RELEASE_TOKENS = new Set([
     'blu',
     'ray',
     'brrip',
+    'bdrip',
+    'bdremux',
+    'remux',
     'web',
+    'dl',
     'webdl',
     'webrip',
     'hdtv',
@@ -93,6 +97,10 @@ const RELEASE_TOKENS = new Set([
     'h264',
     'h265',
     'hevc',
+    'hdr',
+    'dv',
+    'dolby',
+    'vision',
     'aac',
     'dts'
 ]);
@@ -406,10 +414,10 @@ function dedupeByUrl<T extends SubtitleCandidate>(subList: T[]): Array<{ sub: T;
 }
 
 function filenameTokenWeight(token: string): number {
-    if (/^s\d{1,2}e\d{1,2}$/.test(token)) return 12;
-    if (/^(480|576|720|1080|1440|2160)p$/.test(token)) return 8;
+    if (RELEASE_TOKENS.has(token)) return 40;
+    if (/^s\d{1,2}e\d{1,2}$/.test(token)) return 24;
+    if (/^(480|576|720|1080|1440|2160)p$/.test(token)) return 16;
     if (/^\d{4}$/.test(token)) return 6;
-    if (RELEASE_TOKENS.has(token)) return 5;
     if (/^\d+$/.test(token)) return 4;
     if (LOW_VALUE_TOKENS.has(token)) return 1;
     return token.length >= 5 ? 3 : 2;
