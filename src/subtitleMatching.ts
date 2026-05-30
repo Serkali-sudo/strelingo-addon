@@ -110,6 +110,7 @@ const MAX_AUTO_OFFSET_MS = 15000;
 const OFFSET_CONFIDENCE_WINDOW_MS = 750;
 const MIN_OFFSET_CONFIDENCE = 0.6;
 const STANDALONE_SDH_LINE_PATTERN = /^\s*(?:-\s*)?[\[(][^\])]+[\])]\s*$/;
+const ANNOTATION_PATTERN = /[\[(][^\])]*[\])]/g;
 const SPEAKER_LABEL_PATTERN = /^\s*(?:-\s*)?(?:[A-Z][A-Z0-9'._-]*)(?:\s+[A-Z][A-Z0-9'._-]*){0,4}\s*:\s*/;
 
 export function sanitizeSubtitleText(text: string): string {
@@ -124,10 +125,11 @@ export function sanitizeSubtitleText(text: string): string {
         .replace(/&gt;/gi, '>')
         .replace(/&amp;/gi, '&')
         .split(/\r?\n|\r/g)
-        .map(line => line.replace(SPEAKER_LABEL_PATTERN, '').trim())
+        .map(line => line.replace(SPEAKER_LABEL_PATTERN, '').replace(ANNOTATION_PATTERN, ' ').trim())
         .filter(line => line && !STANDALONE_SDH_LINE_PATTERN.test(line))
         .join(' ')
         .replace(/\s+/g, ' ')
+        .replace(/\s+([.,!?;:])/g, '$1')
         .trim();
 }
 

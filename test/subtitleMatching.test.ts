@@ -93,11 +93,15 @@ const cue = (id, startTime, endTime, text) => ({ id, startTime, endTime, text })
         sanitizeSubtitleText('[laughing]\nMATT: You saw that?\n(laughing)\nMATT SMITH: Yeah.'),
         'You saw that? Yeah.'
     );
+    assert.equal(
+        sanitizeSubtitleText('(laughs) I did. This one stays (for now). [music]'),
+        'I did. This one stays.'
+    );
 }
 
 {
     const merged = mergeSubtitlesByTime(
-        [cue('1', '00:00:10,000', '00:00:12,000', '[laughing]\nMATT: Hello')],
+        [cue('1', '00:00:10,000', '00:00:12,000', '[laughing]\nMATT: (laughs) Hello')],
         [cue('1', '00:00:10,000', '00:00:12,000', '(laughing)\nMATT SMITH: Hola')]
     );
 
