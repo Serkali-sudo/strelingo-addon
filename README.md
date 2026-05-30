@@ -50,12 +50,13 @@ or visit the addon page here:
 
 *   [Node.js](https://nodejs.org/) (Version 18 or higher)
 *   [npm](https://www.npmjs.com/)
-*   You will need either Vercel Blob key, Supabase storage credentials, or enable **Direct Serving** (self-hosted). Because the addon creates a brand new SRT every time and it has to host somewhere. You can put those credentials in `.env`. (You can technically return the subtitle as base64 but it only works for Stremio 4, not Stremio 5 or mobile Stremio.)
-*   **Storage Configuration** - You need to choose at least one storage option. Configure your choice via the `.env` file (see [`.env.example`](.env.example) for all options):
+*   The addon returns signed lazy subtitle URLs. The actual merge happens only when Stremio requests a subtitle, not while listing subtitle choices.
+*   **Storage / Serving Configuration** - Configure your choice via the `.env` file (see [`.env.example`](.env.example) for all options):
     *   **Option 1: Vercel Blob** (cloud) - Create a Vercel Blob in [Vercel Dashboard](https://vercel.com/dashboard/stores), copy the token, and put it in your `.env` as `BLOB_READ_WRITE_TOKEN`
     *   **Option 2: Supabase Storage** (cloud) - Get `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` from your [Supabase project settings](https://app.supabase.com) and add them to your `.env`
     *   **Option 3: Local File Storage** (self-hosted) - Set `LOCAL_STORAGE_DIR=./subtitles` in your `.env`. Useful for running on your home network or private server.
     *   **Option 4: Direct Serving** (self-hosted / Cloudflare Workers) - Set `ENABLE_DIRECT_SERVING=true` in your `.env`. Serves merged subtitles directly from the addon instance without using external storage. Best for self-hosted setups or Cloudflare Workers.
+*   Set `SUBTITLE_PAYLOAD_SECRET` for local-only or direct-serving installs. Vercel Blob and Supabase service keys are used for signing automatically when present.
 
 ## Local Setup
 

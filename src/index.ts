@@ -64,6 +64,17 @@ interface SubtitleInfo extends SubtitleCandidate {}
 
 interface SRTLine extends SubtitleCue {}
 
+interface LazySubtitlePayload {
+    v: 1;
+    exp: number;
+    mainUrl: string;
+    mainFormat: string;
+    mainLang: string;
+    transUrl: string;
+    transFormat: string;
+    transLang: string;
+}
+
 // --------------------------------------------------------------------------------------
 // INTERNAL SUBTITLE CONVERTER (Ported flawlessly from subsrt & subtitle-converter)
 // Removes need for unsupported node_modules while ensuring perfect format conversions.
@@ -389,6 +400,8 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
 }
 
 async function fetchSubtitleFilename(url: string): Promise<string | null> {
+    if (!isSafeSubtitleUrl(url)) return null;
+
     try {
         const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
         const disposition = response.headers.get('content-disposition');
@@ -549,6 +562,11 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
 }
 
 async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageCode: string | null = null): Promise<string | null> {
+    if (!isSafeSubtitleUrl(url)) {
+        console.error(`Rejected unsafe subtitle URL: ${url}`);
+        return null;
+    }
+
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await fetch(url, {
@@ -850,17 +868,207 @@ app.get('/subtitles/:filename', async (c) => {
     }
 });
 
+const PAYLOAD_TTL_SECONDS = 30 * 24 * 60 * 60;
+const MAX_SIGNED_PAYLOAD_LENGTH = 4096;
+const SUPPORTED_SUBTITLE_FORMATS = new Set(['srt', 'sub', 'vtt', 'ssa', 'ass', 'sbv', 'smi', 'lrc', 'dfxp', 'ttml']);
+
 function encodeBase64UrlSafe(str: string): string {
-    const base64 = btoa(str);
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    return Buffer.from(str, 'utf-8').toString('base64url');
 }
 
 function decodeBase64UrlSafe(safeBase64: string): string {
-    let base64 = safeBase64.replace(/-/g, '+').replace(/_/g, '/');
-    while (base64.length % 4) {
-        base64 += '=';
+    if (!/^[A-Za-z0-9_-]+$/.test(safeBase64)) {
+        throw new Error('Invalid base64url payload');
     }
-    return atob(base64);
+    return Buffer.from(safeBase64, 'base64url').toString('utf-8');
+}
+
+function encodeBytesBase64Url(bytes: ArrayBuffer): string {
+    return Buffer.from(bytes).toString('base64url');
+}
+
+function getPayloadSigningSecret(c: any): string | undefined {
+    return getEnvVar(c, 'SUBTITLE_PAYLOAD_SECRET')
+        || getEnvVar(c, 'BLOB_READ_WRITE_TOKEN')
+        || getEnvVar(c, 'SUPABASE_SERVICE_KEY');
+}
+
+async function hmacSha256Base64Url(secret: string, data: string): Promise<string> {
+    const key = await globalThis.crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    const signature = await globalThis.crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+    return encodeBytesBase64Url(signature);
+}
+
+function timingSafeEqualString(a: string, b: string): boolean {
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) {
+        diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    }
+    return diff === 0;
+}
+
+async function createSignedSubtitlePayload(c: any, payload: Omit<LazySubtitlePayload, 'v' | 'exp'>): Promise<string | null> {
+    const secret = getPayloadSigningSecret(c);
+    if (!secret || secret.length < 16) {
+        console.warn('No sufficiently strong subtitle payload signing secret configured. Set SUBTITLE_PAYLOAD_SECRET to enable lazy subtitle serving.');
+        return null;
+    }
+
+    const fullPayload: LazySubtitlePayload = {
+        v: 1,
+        exp: Math.floor(Date.now() / 1000) + PAYLOAD_TTL_SECONDS,
+        ...payload
+    };
+    try {
+        validateLazySubtitlePayload(fullPayload);
+    } catch (e: any) {
+        console.warn(`Refusing to sign unsafe subtitle payload: ${e.message}`);
+        return null;
+    }
+
+    const encodedPayload = encodeBase64UrlSafe(JSON.stringify(fullPayload));
+    const signature = await hmacSha256Base64Url(secret, encodedPayload);
+    return `${encodedPayload}.${signature}`;
+}
+
+async function verifySignedSubtitlePayload(c: any, token: string): Promise<LazySubtitlePayload> {
+    if (!token || token.length > MAX_SIGNED_PAYLOAD_LENGTH) {
+        throw Object.assign(new Error('Invalid subtitle payload'), { status: 400 });
+    }
+
+    const [encodedPayload, signature, extra] = token.split('.');
+    if (!encodedPayload || !signature || extra || !/^[A-Za-z0-9_-]+$/.test(signature)) {
+        throw Object.assign(new Error('Invalid signed subtitle payload'), { status: 400 });
+    }
+
+    const secret = getPayloadSigningSecret(c);
+    if (!secret || secret.length < 16) {
+        throw Object.assign(new Error('Subtitle payload signing is not configured'), { status: 403 });
+    }
+
+    const expectedSignature = await hmacSha256Base64Url(secret, encodedPayload);
+    if (!timingSafeEqualString(signature, expectedSignature)) {
+        throw Object.assign(new Error('Invalid subtitle payload signature'), { status: 403 });
+    }
+
+    const decodedStr = decodeBase64UrlSafe(encodedPayload);
+    if (decodedStr.length > MAX_SIGNED_PAYLOAD_LENGTH) {
+        throw Object.assign(new Error('Subtitle payload is too large'), { status: 400 });
+    }
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(decodedStr);
+    } catch {
+        throw Object.assign(new Error('Invalid subtitle payload JSON'), { status: 400 });
+    }
+
+    return validateLazySubtitlePayload(parsed);
+}
+
+function validateLazySubtitlePayload(payload: any): LazySubtitlePayload {
+    const now = Math.floor(Date.now() / 1000);
+    if (!payload || payload.v !== 1 || typeof payload.exp !== 'number' || payload.exp <= now) {
+        throw Object.assign(new Error('Expired or invalid subtitle payload'), { status: 403 });
+    }
+
+    const mainFormat = normalizeSubtitleFormat(payload.mainFormat);
+    const transFormat = normalizeSubtitleFormat(payload.transFormat);
+    const mainLang = normalizeSubtitleLang(payload.mainLang);
+    const transLang = normalizeSubtitleLang(payload.transLang);
+    const mainUrl = normalizeSubtitleUrl(payload.mainUrl);
+    const transUrl = normalizeSubtitleUrl(payload.transUrl);
+
+    return {
+        v: 1,
+        exp: payload.exp,
+        mainUrl,
+        mainFormat,
+        mainLang,
+        transUrl,
+        transFormat,
+        transLang
+    };
+}
+
+function normalizeSubtitleFormat(format: unknown): string {
+    const value = String(format || 'srt').toLowerCase().trim();
+    if (!SUPPORTED_SUBTITLE_FORMATS.has(value)) {
+        throw Object.assign(new Error('Unsupported subtitle format'), { status: 400 });
+    }
+    return value;
+}
+
+function normalizeSubtitleLang(lang: unknown): string {
+    const value = String(lang || 'eng').toLowerCase().trim();
+    if (!/^[a-z0-9_-]{2,12}$/.test(value)) {
+        throw Object.assign(new Error('Invalid subtitle language'), { status: 400 });
+    }
+    return value;
+}
+
+function normalizeSubtitleUrl(url: unknown): string {
+    const value = String(url || '').trim();
+    if (!isSafeSubtitleUrl(value)) {
+        throw Object.assign(new Error('Unsafe subtitle URL'), { status: 400 });
+    }
+    return value;
+}
+
+function isSafeSubtitleUrl(urlString: string): boolean {
+    if (!urlString || urlString.length > 2048) return false;
+
+    let parsed: URL;
+    try {
+        parsed = new URL(urlString);
+    } catch {
+        return false;
+    }
+
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    if (parsed.username || parsed.password) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return false;
+    if (isBlockedIpv4Host(host) || isBlockedIpv6Host(host)) return false;
+
+    return true;
+}
+
+function isBlockedIpv4Host(host: string): boolean {
+    const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    if (!match) return false;
+
+    const parts = match.slice(1).map(Number);
+    if (parts.some(part => part < 0 || part > 255)) return true;
+
+    const [a, b] = parts;
+    return a === 0
+        || a === 10
+        || a === 127
+        || (a === 100 && b >= 64 && b <= 127)
+        || (a === 169 && b === 254)
+        || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && b === 168)
+        || a >= 224;
+}
+
+function isBlockedIpv6Host(host: string): boolean {
+    if (!host.includes(':')) return false;
+    const normalized = host.replace(/^\[|\]$/g, '').toLowerCase();
+    return normalized === '::'
+        || normalized === '::1'
+        || normalized.startsWith('fc')
+        || normalized.startsWith('fd')
+        || normalized.startsWith('fe80:')
+        || normalized.startsWith('0:');
 }
 
 async function handleSubtitlesRequest(c: any) {
@@ -1010,12 +1218,16 @@ async function handleSubtitlesRequest(c: any) {
 
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
+        const lazyServingEnabled = Boolean(getPayloadSigningSecret(c));
+        if (!lazyServingEnabled && directServingEnabled) {
+            console.warn('ENABLE_DIRECT_SERVING is true, but no subtitle payload signing secret is configured. Set SUBTITLE_PAYLOAD_SECRET.');
+        }
         let selectedMainSubInfo: SubtitleInfo | null = null;
         let mainParsed: SRTLine[] | null = null;
 
-        if (directServingEnabled) {
+        if (lazyServingEnabled) {
             selectedMainSubInfo = mainSubInfoList[0];
-            console.log(`Direct serving: selected main subtitle ID=${selectedMainSubInfo.id}, g=${selectedMainSubInfo.g}`);
+            console.log(`Lazy serving: selected main subtitle ID=${selectedMainSubInfo.id}, g=${selectedMainSubInfo.g}`);
         } else {
             for (const mainSubInfo of mainSubInfoList) {
                 console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, g=${mainSubInfo.g}`);
@@ -1047,7 +1259,7 @@ async function handleSubtitlesRequest(c: any) {
             return res;
         }
 
-        if (!directServingEnabled && !mainParsed) {
+        if (!lazyServingEnabled && !mainParsed) {
             console.error("Failed to parse any of the available main subtitles. Cannot proceed.");
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
             putCachedResponse(cacheKey, res, c.executionCtx);
@@ -1068,8 +1280,8 @@ async function handleSubtitlesRequest(c: any) {
             let uploadUrl: string | null = null;
             let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${transSubInfo.id}`;
 
-            if (directServingEnabled) {
-                console.log(`Direct serving enabled! Generating edge-serving URL for v${version}...`);
+            if (lazyServingEnabled) {
+                console.log(`Generating signed lazy subtitle URL for v${version}...`);
                 const workerUrl = `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
 
                 const paramsObj = {
@@ -1081,12 +1293,16 @@ async function handleSubtitlesRequest(c: any) {
                     transLang: transSubInfo.lang || transLang || 'eng'
                 };
 
-                const encodedData = encodeBase64UrlSafe(JSON.stringify(paramsObj));
+                const signedToken = await createSignedSubtitlePayload(c, paramsObj);
+                if (!signedToken) {
+                    console.warn(`Failed to sign lazy subtitle payload for v${version}. Skipping.`);
+                    continue;
+                }
                 const srtFileName = type === 'series' && season && episode
                     ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
                     : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
-                uploadUrl = `${workerUrl}/serve-subtitles/${encodedData}/${srtFileName}`;
-                subtitleEntryId += '-direct';
+                uploadUrl = `${workerUrl}/serve-subtitles/${signedToken}/${srtFileName}`;
+                subtitleEntryId += directServingEnabled ? '-direct' : '-lazy';
             } else {
                 const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
 
@@ -1229,10 +1445,10 @@ async function handleSubtitlesRequest(c: any) {
     }
 }
 
-app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
-    const encodedData = c.req.param('encodedData');
-    if (!encodedData) {
-        return c.text('Missing encoded parameter payload', 400);
+app.get('/serve-subtitles/:token/:filename', async (c) => {
+    const token = c.req.param('token');
+    if (!token) {
+        return c.text('Missing signed subtitle payload', 400);
     }
 
     const cacheKey = makeCacheKey(c.req.url);
@@ -1243,19 +1459,8 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
     }
 
     try {
-        const decodedStr = decodeBase64UrlSafe(encodedData);
-        const params = JSON.parse(decodedStr);
-
-        const mainUrl = params.mainUrl;
-        const mainFormat = params.mainFormat || 'srt';
-        const mainLang = params.mainLang || 'eng';
-        const transUrl = params.transUrl;
-        const transFormat = params.transFormat || 'srt';
-        const transLang = params.transLang || 'eng';
-
-        if (!mainUrl || !transUrl) {
-            return c.text('Missing required subtitle URLs inside payload', 400);
-        }
+        const params = await verifySignedSubtitlePayload(c, token);
+        const { mainUrl, mainFormat, mainLang, transUrl, transFormat, transLang } = params;
 
         console.log(`Direct subtitle serve request. Main: ${mainUrl}, Trans: ${transUrl}`);
 
@@ -1289,64 +1494,12 @@ app.get('/serve-subtitles/:encodedData/:filename', async (c) => {
 
     } catch (e: any) {
         console.error(`Direct subtitle serving failed: ${e.message}`);
-        return c.text(`Subtitle serving failed: ${e.message}`, 500);
+        return c.text(`Subtitle serving failed: ${e.message}`, e.status || 500);
     }
 });
 
 app.get('/serve-subtitles.srt', async (c) => {
-    const mainUrl = c.req.query('mainUrl');
-    const mainFormat = c.req.query('mainFormat') || 'srt';
-    const mainLang = c.req.query('mainLang') || 'eng';
-    const transUrl = c.req.query('transUrl');
-    const transFormat = c.req.query('transFormat') || 'srt';
-    const transLang = c.req.query('transLang') || 'eng';
-
-    if (!mainUrl || !transUrl) {
-        return c.text('Missing required subtitle URLs', 400);
-    }
-
-    const cacheKey = makeCacheKey(c.req.url);
-    const cachedResponse = await getCachedResponse(cacheKey);
-    if (cachedResponse) {
-        console.log("Subtitle query cache hit! Serving from edge cache.");
-        return cachedResponse;
-    }
-
-    try {
-        console.log(`Direct subtitle serve request. Main: ${mainUrl}, Trans: ${transUrl}`);
-
-        const mainSubContent = await fetchSubtitleContent(mainUrl, mainFormat, mainLang);
-
-        if (!mainSubContent) throw new Error("Failed to fetch main subtitle");
-        const mainParsed = parseSrt(mainSubContent);
-        if (!mainParsed) throw new Error("Failed to parse main subtitle");
-
-        const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
-
-        if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
-        const transParsed = parseSrt(transSubContent);
-        if (!transParsed) throw new Error("Failed to parse translation subtitle");
-
-        const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
-        if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
-
-        const mergedSrtString = formatSrt(mergedParsed);
-        if (!mergedSrtString) throw new Error("Failed to format merged subtitles");
-
-        const response = c.body(mergedSrtString, 200, {
-            'Content-Type': 'text/srt; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=86400'
-        });
-
-        putCachedResponse(cacheKey, response, c.executionCtx);
-
-        return response;
-
-    } catch (e: any) {
-        console.error(`Direct subtitle serving failed: ${e.message}`);
-        return c.text(`Subtitle serving failed: ${e.message}`, 500);
-    }
+    return c.text('Unsigned subtitle query URLs are disabled. Use signed /serve-subtitles/:token/:filename URLs.', 410);
 });
 
 app.get('/subtitles/:type/:idAndMaybeJson', handleSubtitlesRequest);
