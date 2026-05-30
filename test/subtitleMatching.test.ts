@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {
     mergeSubtitlesByTime,
-    rankSubtitleCandidates
+    rankSubtitleCandidates,
+    sanitizeSubtitleText
 } from '../src/subtitleMatching.ts';
 
 const cue = (id, startTime, endTime, text) => ({ id, startTime, endTime, text });
@@ -71,6 +72,22 @@ const cue = (id, startTime, endTime, text) => ({ id, startTime, endTime, text })
     });
 
     assert.equal(ranked[0].sub.id, 2);
+}
+
+{
+    assert.equal(
+        sanitizeSubtitleText('[laughing]\nMATT: You saw that?\n(laughing)\nMATT SMITH: Yeah.'),
+        'You saw that? Yeah.'
+    );
+}
+
+{
+    const merged = mergeSubtitlesByTime(
+        [cue('1', '00:00:10,000', '00:00:12,000', '[laughing]\nMATT: Hello')],
+        [cue('1', '00:00:10,000', '00:00:12,000', '(laughing)\nMATT SMITH: Hola')]
+    );
+
+    assert.equal(merged[0].text, '<b>Hello</b>\n<i>> Hola</i>');
 }
 
 console.log('subtitleMatching tests passed');
