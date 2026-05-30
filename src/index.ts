@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createClient } from '@supabase/supabase-js';
-import { put } from '@vercel/blob';
+import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { head, put } from '@vercel/blob';
 
 import SRTParser2 from 'srt-parser-2';
 import { promises as fs } from 'node:fs';
@@ -73,6 +73,15 @@ interface LazySubtitlePayload {
     transUrl: string;
     transFormat: string;
     transLang: string;
+    storageFileName?: string;
+    s3Key?: string;
+}
+
+interface S3StorageConfig {
+    client: S3Client;
+    bucket: string;
+    publicBaseUrl: string;
+    prefix: string;
 }
 
 // --------------------------------------------------------------------------------------
@@ -890,7 +899,7 @@ function encodeBytesBase64Url(bytes: ArrayBuffer): string {
 function getPayloadSigningSecret(c: any): string | undefined {
     return getEnvVar(c, 'SUBTITLE_PAYLOAD_SECRET')
         || getEnvVar(c, 'BLOB_READ_WRITE_TOKEN')
-        || getEnvVar(c, 'SUPABASE_SERVICE_KEY');
+        || getEnvVar(c, 'S3_SECRET_ACCESS_KEY');
 }
 
 async function hmacSha256Base64Url(secret: string, data: string): Promise<string> {
@@ -985,6 +994,12 @@ function validateLazySubtitlePayload(payload: any): LazySubtitlePayload {
     const transLang = normalizeSubtitleLang(payload.transLang);
     const mainUrl = normalizeSubtitleUrl(payload.mainUrl);
     const transUrl = normalizeSubtitleUrl(payload.transUrl);
+    const storageFileName = payload.storageFileName === undefined
+        ? undefined
+        : normalizeStorageFileName(payload.storageFileName);
+    const s3Key = payload.s3Key === undefined
+        ? undefined
+        : normalizeStorageKey(payload.s3Key);
 
     return {
         v: 1,
@@ -994,7 +1009,9 @@ function validateLazySubtitlePayload(payload: any): LazySubtitlePayload {
         mainLang,
         transUrl,
         transFormat,
-        transLang
+        transLang,
+        storageFileName,
+        s3Key
     };
 }
 
@@ -1018,6 +1035,22 @@ function normalizeSubtitleUrl(url: unknown): string {
     const value = String(url || '').trim();
     if (!isSafeSubtitleUrl(value)) {
         throw Object.assign(new Error('Unsafe subtitle URL'), { status: 400 });
+    }
+    return value;
+}
+
+function normalizeStorageFileName(fileName: unknown): string {
+    const value = String(fileName || '').trim();
+    if (!/^[A-Za-z0-9._-]+\.srt$/.test(value)) {
+        throw Object.assign(new Error('Invalid storage filename'), { status: 400 });
+    }
+    return value;
+}
+
+function normalizeStorageKey(key: unknown): string {
+    const value = String(key || '').trim();
+    if (!/^[A-Za-z0-9._/-]+\.srt$/.test(value) || value.includes('..') || value.startsWith('/') || value.endsWith('/')) {
+        throw Object.assign(new Error('Invalid storage key'), { status: 400 });
     }
     return value;
 }
@@ -1069,6 +1102,223 @@ function isBlockedIpv6Host(host: string): boolean {
         || normalized.startsWith('fd')
         || normalized.startsWith('fe80:')
         || normalized.startsWith('0:');
+}
+
+function buildSubtitleFileName(
+    type: string,
+    imdbId: string,
+    season: string | undefined,
+    episode: string | undefined,
+    mainLang: string | undefined,
+    transLang: string | undefined,
+    version: number
+): string {
+    const safeMainLang = mainLang || 'eng';
+    const safeTransLang = transLang || 'eng';
+    return type === 'series' && season && episode
+        ? `${imdbId}_S${season}E${episode}_${safeMainLang}_${safeTransLang}_v${version}.srt`
+        : `${imdbId}_${safeMainLang}_${safeTransLang}_v${version}.srt`;
+}
+
+function buildSubtitleStoragePath(
+    type: string,
+    imdbId: string,
+    season: string | undefined,
+    episode: string | undefined,
+    mainLang: string | undefined,
+    transLang: string | undefined,
+    version: number
+): string {
+    const safeMainLang = mainLang || 'eng';
+    const safeTransLang = transLang || 'eng';
+    return type === 'series' && season && episode
+        ? `${imdbId}/S${season}E${episode}_${safeMainLang}_${safeTransLang}_v${version}.srt`
+        : `${imdbId}/${safeMainLang}_${safeTransLang}_v${version}.srt`;
+}
+
+function buildS3SubtitleKey(prefix: string, filePath: string): string {
+    const normalizedPrefix = prefix
+        .trim()
+        .replace(/^\/+|\/+$/g, '');
+
+    return normalizedPrefix ? `${normalizedPrefix}/${filePath}` : filePath;
+}
+
+function getS3StorageConfig(c: any): S3StorageConfig | null {
+    const bucket = getEnvVar(c, 'S3_BUCKET');
+    const accessKeyId = getEnvVar(c, 'S3_ACCESS_KEY_ID');
+    const secretAccessKey = getEnvVar(c, 'S3_SECRET_ACCESS_KEY');
+    const publicBaseUrl = getEnvVar(c, 'S3_PUBLIC_BASE_URL');
+
+    if (!bucket || !accessKeyId || !secretAccessKey || !publicBaseUrl) {
+        return null;
+    }
+
+    const endpoint = getEnvVar(c, 'S3_ENDPOINT');
+    const region = getEnvVar(c, 'S3_REGION') || 'auto';
+    const forcePathStyle = getEnvVar(c, 'S3_FORCE_PATH_STYLE') !== 'false';
+    const prefix = getEnvVar(c, 'S3_PREFIX') || '';
+
+    return {
+        client: new S3Client({
+            region,
+            endpoint,
+            forcePathStyle,
+            credentials: {
+                accessKeyId,
+                secretAccessKey
+            }
+        }),
+        bucket,
+        publicBaseUrl: publicBaseUrl.replace(/\/+$/g, ''),
+        prefix
+    };
+}
+
+function getS3PublicSubtitleUrl(config: S3StorageConfig, key: string): string {
+    return `${config.publicBaseUrl}/${key.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+async function getExistingVercelBlobUrl(pathname: string): Promise<string | null> {
+    try {
+        const blob = await head(pathname);
+        return blob?.url || null;
+    } catch {
+        return null;
+    }
+}
+
+async function getExistingS3SubtitleUrl(config: S3StorageConfig, key: string): Promise<string | null> {
+    try {
+        await config.client.send(new HeadObjectCommand({
+            Bucket: config.bucket,
+            Key: key
+        }));
+        return getS3PublicSubtitleUrl(config, key);
+    } catch {
+        return null;
+    }
+}
+
+async function putS3Subtitle(config: S3StorageConfig, key: string, content: string): Promise<string | null> {
+    try {
+        await config.client.send(new PutObjectCommand({
+            Bucket: config.bucket,
+            Key: key,
+            Body: content,
+            ContentType: 'text/srt; charset=utf-8',
+            CacheControl: 'public, max-age=3600',
+            IfNoneMatch: '*'
+        }));
+        return getS3PublicSubtitleUrl(config, key);
+    } catch {
+        return await getExistingS3SubtitleUrl(config, key);
+    }
+}
+
+async function getExistingLocalSubtitleUrl(localStorageDir: string, fileName: string, externalUrl: string): Promise<string | null> {
+    try {
+        const filePath = path.join(localStorageDir, fileName);
+        await fs.access(filePath);
+        return `${externalUrl}/subtitles/${fileName}`;
+    } catch {
+        return null;
+    }
+}
+
+async function findExistingStoredSubtitleUrl(
+    c: any,
+    fileName: string,
+    s3Key: string
+): Promise<{ url: string; suffix: string } | null> {
+    const skipVercelBlob = getEnvVar(c, 'SKIP_VERCEL_BLOB') === 'true';
+    if (!skipVercelBlob) {
+        const existingBlobUrl = await getExistingVercelBlobUrl(fileName);
+        if (existingBlobUrl) return { url: existingBlobUrl, suffix: '-vercel' };
+    }
+
+    const s3Storage = getS3StorageConfig(c);
+    if (s3Storage) {
+        const existingS3Url = await getExistingS3SubtitleUrl(s3Storage, s3Key);
+        if (existingS3Url) return { url: existingS3Url, suffix: '-s3' };
+    }
+
+    const localStorageDir = getEnvVar(c, 'LOCAL_STORAGE_DIR');
+    if (localStorageDir) {
+        const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+        const existingLocalUrl = await getExistingLocalSubtitleUrl(localStorageDir, fileName, externalUrl);
+        if (existingLocalUrl) return { url: existingLocalUrl, suffix: '-local' };
+    }
+
+    return null;
+}
+
+async function storeMergedSubtitle(
+    c: any,
+    fileName: string,
+    s3Key: string,
+    mergedSrtString: string
+): Promise<{ url: string; suffix: string } | null> {
+    const skipVercelBlob = getEnvVar(c, 'SKIP_VERCEL_BLOB') === 'true';
+    if (!skipVercelBlob) {
+        try {
+            const { url } = await put(
+                fileName,
+                mergedSrtString,
+                { access: 'public', addRandomSuffix: false }
+            );
+            return { url, suffix: '-vercel' };
+        } catch {
+            const existingBlobUrl = await getExistingVercelBlobUrl(fileName);
+            if (existingBlobUrl) return { url: existingBlobUrl, suffix: '-vercel' };
+        }
+    }
+
+    const s3Storage = getS3StorageConfig(c);
+    if (s3Storage) {
+        const s3Url = await putS3Subtitle(s3Storage, s3Key, mergedSrtString);
+        if (s3Url) return { url: s3Url, suffix: '-s3' };
+    }
+
+    const localStorageDir = getEnvVar(c, 'LOCAL_STORAGE_DIR');
+    if (localStorageDir) {
+        const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+        try {
+            await fs.mkdir(localStorageDir, { recursive: true });
+
+            const localFilePath = path.join(localStorageDir, fileName);
+            await fs.writeFile(localFilePath, mergedSrtString, { encoding: 'utf-8', flag: 'wx' });
+
+            return { url: `${externalUrl}/subtitles/${fileName}`, suffix: '-local' };
+        } catch {
+            const existingLocalUrl = await getExistingLocalSubtitleUrl(localStorageDir, fileName, externalUrl);
+            if (existingLocalUrl) return { url: existingLocalUrl, suffix: '-local' };
+        }
+    }
+
+    return null;
+}
+
+async function buildMergedSubtitleSrt(params: LazySubtitlePayload): Promise<string> {
+    const mainSubContent = await fetchSubtitleContent(params.mainUrl, params.mainFormat, params.mainLang);
+    if (!mainSubContent) throw new Error("Failed to fetch main subtitle");
+
+    const mainParsed = parseSrt(mainSubContent);
+    if (!mainParsed) throw new Error("Failed to parse main subtitle");
+
+    const transSubContent = await fetchSubtitleContent(params.transUrl, params.transFormat, params.transLang);
+    if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
+
+    const transParsed = parseSrt(transSubContent);
+    if (!transParsed) throw new Error("Failed to parse translation subtitle");
+
+    const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
+    if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
+
+    const mergedSrtString = formatSrt(mergedParsed);
+    if (!mergedSrtString) throw new Error("Failed to format merged subtitles");
+
+    return mergedSrtString;
 }
 
 async function handleSubtitlesRequest(c: any) {
@@ -1163,15 +1413,11 @@ async function handleSubtitlesRequest(c: any) {
         console.log("SKIP_VERCEL_BLOB is true, Vercel Blob upload will be skipped.");
     }
 
-    const supabaseUrl = getEnvVar(c, 'SUPABASE_URL');
-    const supabaseKey = getEnvVar(c, 'SUPABASE_SERVICE_KEY');
-
-    let supabase: any;
-    if (supabaseUrl && supabaseKey) {
-        supabase = createClient(supabaseUrl, supabaseKey);
-        console.log("Supabase client initialized with Service Role Key.");
+    const s3Storage = getS3StorageConfig(c);
+    if (s3Storage) {
+        console.log("S3-compatible storage initialized.");
     } else {
-        console.warn("Supabase URL or Service Role Key not found in environment variables. Supabase fallback disabled.");
+        console.warn("S3-compatible storage is not fully configured.");
     }
 
     try {
@@ -1218,9 +1464,12 @@ async function handleSubtitlesRequest(c: any) {
 
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
-        const lazyServingEnabled = Boolean(getPayloadSigningSecret(c));
-        if (!lazyServingEnabled && directServingEnabled) {
-            console.warn('ENABLE_DIRECT_SERVING is true, but no subtitle payload signing secret is configured. Set SUBTITLE_PAYLOAD_SECRET.');
+        const storageLazyRequested = getEnvVar(c, 'ENABLE_STORAGE_LAZY_SERVING') === 'true';
+        const hasPayloadSigningSecret = Boolean(getPayloadSigningSecret(c));
+        const storageLazyServingEnabled = !directServingEnabled && storageLazyRequested && hasPayloadSigningSecret;
+        const lazyServingEnabled = (directServingEnabled || storageLazyServingEnabled) && hasPayloadSigningSecret;
+        if ((directServingEnabled || storageLazyRequested) && !hasPayloadSigningSecret) {
+            console.warn('Lazy serving is enabled, but no subtitle payload signing secret is configured. Set SUBTITLE_PAYLOAD_SECRET.');
         }
         let selectedMainSubInfo: SubtitleInfo | null = null;
         let mainParsed: SRTLine[] | null = null;
@@ -1279,6 +1528,9 @@ async function handleSubtitlesRequest(c: any) {
 
             let uploadUrl: string | null = null;
             let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${transSubInfo.id}`;
+            const srtFileName = buildSubtitleFileName(type, imdbId, season, episode, mainLang, transLang, version);
+            const storagePath = buildSubtitleStoragePath(type, imdbId, season, episode, mainLang, transLang, version);
+            const s3Key = buildS3SubtitleKey(getEnvVar(c, 'S3_PREFIX') || '', storagePath);
 
             if (lazyServingEnabled) {
                 console.log(`Generating signed lazy subtitle URL for v${version}...`);
@@ -1290,7 +1542,9 @@ async function handleSubtitlesRequest(c: any) {
                     mainLang: selectedMainSubInfo.lang || mainLang || 'eng',
                     transUrl: transSubInfo.url,
                     transFormat: transSubInfo.format || 'srt',
-                    transLang: transSubInfo.lang || transLang || 'eng'
+                    transLang: transSubInfo.lang || transLang || 'eng',
+                    storageFileName: storageLazyServingEnabled ? srtFileName : undefined,
+                    s3Key: storageLazyServingEnabled ? s3Key : undefined
                 };
 
                 const signedToken = await createSignedSubtitlePayload(c, paramsObj);
@@ -1298,114 +1552,49 @@ async function handleSubtitlesRequest(c: any) {
                     console.warn(`Failed to sign lazy subtitle payload for v${version}. Skipping.`);
                     continue;
                 }
-                const srtFileName = type === 'series' && season && episode
-                    ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
-                    : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
                 uploadUrl = `${workerUrl}/serve-subtitles/${signedToken}/${srtFileName}`;
                 subtitleEntryId += directServingEnabled ? '-direct' : '-lazy';
             } else {
-                const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
-
-                if (!transSubContent) {
-                    console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
-                    continue;
+                console.log(`Checking storage cache for v${version}...`);
+                const existingStoredSubtitle = await findExistingStoredSubtitleUrl(c, srtFileName, s3Key);
+                if (existingStoredSubtitle) {
+                    console.log(`Storage cache hit for v${version}: ${existingStoredSubtitle.url}`);
+                    uploadUrl = existingStoredSubtitle.url;
+                    subtitleEntryId += existingStoredSubtitle.suffix;
                 }
 
-                const transParsed = parseSrt(transSubContent);
-                if (!transParsed) {
-                    console.warn(`Failed to parse content for translation v${version}. Skipping.`);
-                    continue;
-                }
+                if (!uploadUrl) {
+                    const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
 
-                console.log(`Merging main with translation v${version}...`);
-                const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
-                if (!mergedParsed || mergedParsed.length === 0) {
-                    console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
-                    continue;
-                }
-
-                console.log(`Formatting merged SRT for v${version}...`);
-                const mergedSrtString = formatSrt(mergedParsed);
-                if (!mergedSrtString) {
-                    console.warn(`Failed to format merged SRT for v${version}. Skipping.`);
-                    continue;
-                }
-
-                if (!skipVercelBlob) {
-                    console.log(`Attempting Vercel Blob upload for v${version}...`);
-                    try {
-                        const blobFileName = type === 'series' && season && episode
-                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
-                            : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
-
-                        const { url } = await put(
-                            blobFileName,
-                            mergedSrtString,
-                            { access: 'public', addRandomSuffix: true }
-                        );
-                        console.log(`Uploaded v${version} to Vercel Blob: ${url}`);
-                        uploadUrl = url;
-                        subtitleEntryId += '-vercel';
-                    } catch (e: any) {
-                        console.error(`Failed to upload merged SRT for v${version} to Vercel Blob: ${e.message}`);
+                    if (!transSubContent) {
+                        console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
+                        continue;
                     }
-                }
 
-                if (!uploadUrl && supabase) {
-                    console.log(`Attempting Supabase Storage upload for v${version}...`);
-                    try {
-                        const supabaseFileName = type === 'series' && season && episode
-                            ? `${imdbId}/S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
-                            : `${imdbId}/${mainLang}_${transLang}_v${version}.srt`;
-
-                        const { error: supabaseError } = await supabase
-                            .storage
-                            .from('subtitles')
-                            .upload(supabaseFileName, mergedSrtString, {
-                                cacheControl: '3600',
-                                upsert: true,
-                                contentType: 'text/srt; charset=utf-8'
-                            });
-
-                        if (supabaseError) throw supabaseError;
-
-                        const { data: publicUrlData } = supabase
-                            .storage
-                            .from('subtitles')
-                            .getPublicUrl(supabaseFileName);
-
-                        if (!publicUrlData || !publicUrlData.publicUrl) {
-                            console.error(`Supabase upload successful for v${version}, but failed to get public URL.`);
-                        } else {
-                            uploadUrl = publicUrlData.publicUrl;
-                            console.log(`Uploaded v${version} to Supabase: ${uploadUrl}`);
-                            subtitleEntryId += '-supabase';
-                        }
-                    } catch (e: any) {
-                        console.error(`Supabase Storage upload failed for v${version}: ${e.message}`);
+                    const transParsed = parseSrt(transSubContent);
+                    if (!transParsed) {
+                        console.warn(`Failed to parse content for translation v${version}. Skipping.`);
+                        continue;
                     }
-                }
 
-                const localStorageDir = getEnvVar(c, 'LOCAL_STORAGE_DIR');
-                const externalUrl = getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`;
+                    console.log(`Merging main with translation v${version}...`);
+                    const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
+                    if (!mergedParsed || mergedParsed.length === 0) {
+                        console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
+                        continue;
+                    }
 
-                if (!uploadUrl && localStorageDir) {
-                    console.log(`Attempting Local Storage upload for v${version}...`);
-                    try {
-                        await fs.mkdir(localStorageDir, { recursive: true });
+                    console.log(`Formatting merged SRT for v${version}...`);
+                    const mergedSrtString = formatSrt(mergedParsed);
+                    if (!mergedSrtString) {
+                        console.warn(`Failed to format merged SRT for v${version}. Skipping.`);
+                        continue;
+                    }
 
-                        const localFileName = type === 'series' && season && episode
-                            ? `${imdbId}_S${season}E${episode}_${mainLang}_${transLang}_v${version}.srt`
-                            : `${imdbId}_${mainLang}_${transLang}_v${version}.srt`;
-                        const localFilePath = path.join(localStorageDir, localFileName);
-
-                        await fs.writeFile(localFilePath, mergedSrtString, 'utf-8');
-
-                        uploadUrl = `${externalUrl}/subtitles/${localFileName}`;
-                        console.log(`Uploaded v${version} to Local Storage: ${uploadUrl}`);
-                        subtitleEntryId += '-local';
-                    } catch (e: any) {
-                        console.warn(`Local Storage write failed (normal on read-only environments like Workers): ${e.message}`);
+                    const storedSubtitle = await storeMergedSubtitle(c, srtFileName, s3Key, mergedSrtString);
+                    if (storedSubtitle) {
+                        uploadUrl = storedSubtitle.url;
+                        subtitleEntryId += storedSubtitle.suffix;
                     }
                 }
             }
@@ -1419,7 +1608,7 @@ async function handleSubtitlesRequest(c: any) {
                     label: readableLang
                 });
             } else {
-                console.warn(`Failed to upload v${version} to either Vercel Blob or Supabase Storage.`);
+                console.warn(`Failed to serve or store v${version}.`);
             }
         }
 
@@ -1460,27 +1649,25 @@ app.get('/serve-subtitles/:token/:filename', async (c) => {
 
     try {
         const params = await verifySignedSubtitlePayload(c, token);
-        const { mainUrl, mainFormat, mainLang, transUrl, transFormat, transLang } = params;
+        const { mainUrl, transUrl, storageFileName, s3Key } = params;
 
         console.log(`Direct subtitle serve request. Main: ${mainUrl}, Trans: ${transUrl}`);
 
-        const mainSubContent = await fetchSubtitleContent(mainUrl, mainFormat, mainLang);
+        if (storageFileName && s3Key) {
+            const existingStoredSubtitle = await findExistingStoredSubtitleUrl(c, storageFileName, s3Key);
+            if (existingStoredSubtitle) {
+                return c.redirect(existingStoredSubtitle.url, 302);
+            }
+        }
 
-        if (!mainSubContent) throw new Error("Failed to fetch main subtitle");
-        const mainParsed = parseSrt(mainSubContent);
-        if (!mainParsed) throw new Error("Failed to parse main subtitle");
+        const mergedSrtString = await buildMergedSubtitleSrt(params);
 
-        const transSubContent = await fetchSubtitleContent(transUrl, transFormat, transLang);
-
-        if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
-        const transParsed = parseSrt(transSubContent);
-        if (!transParsed) throw new Error("Failed to parse translation subtitle");
-
-        const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
-        if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
-
-        const mergedSrtString = formatSrt(mergedParsed);
-        if (!mergedSrtString) throw new Error("Failed to format merged subtitles");
+        if (storageFileName && s3Key) {
+            const storedSubtitle = await storeMergedSubtitle(c, storageFileName, s3Key, mergedSrtString);
+            if (storedSubtitle) {
+                return c.redirect(storedSubtitle.url, 302);
+            }
+        }
 
         const response = c.body(mergedSrtString, 200, {
             'Content-Type': 'text/srt; charset=utf-8',

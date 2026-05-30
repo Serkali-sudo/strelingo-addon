@@ -50,13 +50,15 @@ or visit the addon page here:
 
 *   [Node.js](https://nodejs.org/) (Version 18 or higher)
 *   [npm](https://www.npmjs.com/)
-*   The addon returns signed lazy subtitle URLs. The actual merge happens only when Stremio requests a subtitle, not while listing subtitle choices.
+*   Storage modes reuse existing generated subtitles when the same movie/episode, language pair, and version filename already exists.
 *   **Storage / Serving Configuration** - Configure your choice via the `.env` file (see [`.env.example`](.env.example) for all options):
     *   **Option 1: Vercel Blob** (cloud) - Create a Vercel Blob in [Vercel Dashboard](https://vercel.com/dashboard/stores), copy the token, and put it in your `.env` as `BLOB_READ_WRITE_TOKEN`
-    *   **Option 2: Supabase Storage** (cloud) - Get `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` from your [Supabase project settings](https://app.supabase.com) and add them to your `.env`
+    *   **Option 2: S3-Compatible Storage** (cloud / self-hosted) - Configure `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `S3_PUBLIC_BASE_URL`. Works with AWS S3, Cloudflare R2, Supabase Storage S3, Backblaze B2, DigitalOcean Spaces, Wasabi, MinIO, and similar providers.
     *   **Option 3: Local File Storage** (self-hosted) - Set `LOCAL_STORAGE_DIR=./subtitles` in your `.env`. Useful for running on your home network or private server.
-    *   **Option 4: Direct Serving** (self-hosted / Cloudflare Workers) - Set `ENABLE_DIRECT_SERVING=true` in your `.env`. Serves merged subtitles directly from the addon instance without using external storage. Best for self-hosted setups or Cloudflare Workers.
-*   Set `SUBTITLE_PAYLOAD_SECRET` for local-only or direct-serving installs. Vercel Blob and Supabase service keys are used for signing automatically when present.
+    *   **Option 4: Direct Serving** (self-hosted / Cloudflare Workers) - Set `ENABLE_DIRECT_SERVING=true` in your `.env`. Serves merged subtitles directly from the addon instance using signed lazy URLs. Best for self-hosted setups or Cloudflare Workers.
+*   For S3-compatible storage, `S3_ENDPOINT` is required for providers like Cloudflare R2, Supabase Storage S3, Spaces, B2, Wasabi, and MinIO, but can usually be omitted for regular AWS S3. `S3_PUBLIC_BASE_URL` is app-specific: it is the public-read URL base returned to Stremio, not an AWS SDK setting.
+*   Set `ENABLE_STORAGE_LAZY_SERVING=true` if storage modes should merge only when Stremio clicks a subtitle. Leave it unset to check storage first, then process missing subtitles during the listing request.
+*   Set `SUBTITLE_PAYLOAD_SECRET` for direct-serving installs. Vercel Blob and S3 secret keys can be used for signing automatically when present.
 
 ## Local Setup
 
