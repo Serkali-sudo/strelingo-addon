@@ -13,8 +13,6 @@ import landingTemplate, { Manifest } from './landingTemplate';
 import { decodeSubtitleBuffer, getLanguageAliases } from './encoding';
 import {
     mergeSubtitlesByTime,
-    rankSubtitleCandidates,
-    type SubtitleCandidate,
     type SubtitleCue
 } from './subtitleMatching';
 
@@ -60,7 +58,16 @@ const browserLanguageMap: Record<string, string> = {
 
 const languageOptions = Object.entries(languageMap).map(([code, name]) => `${name} [${code}]`);
 
-interface SubtitleInfo extends SubtitleCandidate {}
+interface SubtitleInfo {
+    id: string | number;
+    url: string;
+    lang: string;
+    format: string;
+    langName: string;
+    releaseName: string;
+    rating: number;
+    g: number;
+}
 
 interface SRTLine extends SubtitleCue {}
 
@@ -416,40 +423,6 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
     } catch (e: any) {
         console.warn("Cache write error:", e.message);
     }
-}
-
-async function fetchSubtitleFilename(url: string): Promise<string | null> {
-    if (!isSafeSubtitleUrl(url)) return null;
-
-    try {
-        const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
-        const disposition = response.headers.get('content-disposition');
-        if (!disposition) return null;
-        const match = disposition.match(/filename="?([^";]+)"?/i);
-        return match ? match[1] : null;
-    } catch {
-        return null;
-    }
-}
-
-async function rankSubtitleInfoList(subList: SubtitleInfo[], videoFilename?: string): Promise<SubtitleInfo[]> {
-    const ranked = await rankSubtitleCandidates(subList, {
-        videoFilename,
-        fetchSubtitleFilename
-    });
-
-    for (const candidate of ranked.slice(0, 5)) {
-        const details = [
-            `score=${candidate.score}`,
-            `filenameScore=${candidate.filenameScore}`,
-            `weakPenalty=${candidate.weakVariantPenalty}`,
-            `g=${candidate.providerScore}`
-        ].join(' ');
-        const filename = candidate.filename ? ` filename=${candidate.filename}` : '';
-        console.log(`Ranked subtitle ID=${candidate.sub.id} ${details}${filename}`);
-    }
-
-    return ranked.map(candidate => candidate.sub);
 }
 
 // Fetch all subtitles using standard web fetch (axios-free)
@@ -1613,12 +1586,7 @@ async function handleSubtitlesRequest(c: any) {
             return res;
         }
 
-        console.log(`Ranking main subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
-        mainSubInfoList = await rankSubtitleInfoList(mainSubInfoList, videoParams.filename);
-
-        console.log(`Ranking translation subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
-        transSubInfoList = await rankSubtitleInfoList(transSubInfoList, videoParams.filename);
-
+        console.log('Using subtitle candidates in original provider response order.');
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
         const storageLazyRequested = getEnvVar(c, 'ENABLE_STORAGE_LAZY_SERVING') === 'true';
