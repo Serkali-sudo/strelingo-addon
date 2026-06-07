@@ -474,7 +474,7 @@ async function fetchAllSubtitles(
 
     try {
         const opensubsResponsePromise = fetch(apiUrl, {
-            signal: AbortSignal.timeout(20000)
+            signal: AbortSignal.timeout(23000)
         }).then(async res => {
             if (!res.ok) throw new Error(`OpenSubtitles API responded with ${res.status}`);
             return await res.json() as any;
