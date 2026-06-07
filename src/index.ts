@@ -84,10 +84,6 @@ interface S3StorageConfig {
     prefix: string;
 }
 
-// --------------------------------------------------------------------------------------
-// INTERNAL SUBTITLE CONVERTER (Ported flawlessly from subsrt & subtitle-converter)
-// Removes need for unsupported node_modules while ensuring perfect format conversions.
-// --------------------------------------------------------------------------------------
 const SubtitleConverter = {
     toTimeString(ms: number): string {
         const hh = Math.floor(ms / 1000 / 3600);
@@ -478,7 +474,7 @@ async function fetchAllSubtitles(
 
     try {
         const opensubsResponsePromise = fetch(apiUrl, {
-            signal: AbortSignal.timeout(10000)
+            signal: AbortSignal.timeout(20000)
         }).then(async res => {
             if (!res.ok) throw new Error(`OpenSubtitles API responded with ${res.status}`);
             return await res.json() as any;
