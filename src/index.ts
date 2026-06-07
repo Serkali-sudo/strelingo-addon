@@ -13,6 +13,8 @@ import landingTemplate, { Manifest } from './landingTemplate';
 import { decodeSubtitleBuffer, getLanguageAliases } from './encoding';
 import {
     mergeSubtitlesByTime,
+    rankSubtitleCandidates,
+    type SubtitleCandidate,
     type SubtitleCue
 } from './subtitleMatching';
 
@@ -58,16 +60,7 @@ const browserLanguageMap: Record<string, string> = {
 
 const languageOptions = Object.entries(languageMap).map(([code, name]) => `${name} [${code}]`);
 
-interface SubtitleInfo {
-    id: string | number;
-    url: string;
-    lang: string;
-    format: string;
-    langName: string;
-    releaseName: string;
-    rating: number;
-    g: number;
-}
+interface SubtitleInfo extends SubtitleCandidate {}
 
 interface SRTLine extends SubtitleCue {}
 
@@ -90,20 +83,6 @@ interface S3StorageConfig {
     publicBaseUrl: string;
     prefix: string;
 }
-
-interface LegacyOpenSubtitlesSubtitle {
-    IDSubtitleFile?: string;
-    SubDownloadLink?: string;
-    SubFormat?: string;
-    MovieReleaseName?: string;
-    MovieName?: string;
-    SubRating?: string;
-    SubDownloadsCnt?: string;
-    SubLanguageID?: string;
-}
-
-const LEGACY_OPENSUBTITLES_API_URL = 'https://rest.opensubtitles.org';
-const SUBTITLE_REQUEST_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
 
 const SubtitleConverter = {
     toTimeString(ms: number): string {
@@ -425,11 +404,38 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
     }
 }
 
-function getSubtitleRequestHeaders(accept: string): HeadersInit {
-    return {
-        'User-Agent': SUBTITLE_REQUEST_USER_AGENT,
-        'Accept': accept
-    };
+async function fetchSubtitleFilename(url: string): Promise<string | null> {
+    if (!isSafeSubtitleUrl(url)) return null;
+
+    try {
+        const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+        const disposition = response.headers.get('content-disposition');
+        if (!disposition) return null;
+        const match = disposition.match(/filename="?([^";]+)"?/i);
+        return match ? match[1] : null;
+    } catch {
+        return null;
+    }
+}
+
+async function rankSubtitleInfoList(subList: SubtitleInfo[], videoFilename?: string): Promise<SubtitleInfo[]> {
+    const ranked = await rankSubtitleCandidates(subList, {
+        videoFilename,
+        fetchSubtitleFilename
+    });
+
+    for (const candidate of ranked.slice(0, 5)) {
+        const details = [
+            `score=${candidate.score}`,
+            `filenameScore=${candidate.filenameScore}`,
+            `weakPenalty=${candidate.weakVariantPenalty}`,
+            `g=${candidate.providerScore}`
+        ].join(' ');
+        const filename = candidate.filename ? ` filename=${candidate.filename}` : '';
+        console.log(`Ranked subtitle ID=${candidate.sub.id} ${details}${filename}`);
+    }
+
+    return ranked.map(candidate => candidate.sub);
 }
 
 // Fetch all subtitles using standard web fetch (axios-free)
@@ -437,8 +443,7 @@ async function fetchAllSubtitles(
     baseSearchParams: { imdbid: string; season?: string; episode?: string },
     type: string,
     videoParams: { filename?: string; videoSize?: string; videoHash?: string } = {},
-    needsJapanese = false,
-    fallbackLanguageIds: string[] = []
+    needsJapanese = false
 ): Promise<any[] | null> {
     const imdbId = `tt${baseSearchParams.imdbid}`;
     let apiUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${imdbId}`;
@@ -469,8 +474,7 @@ async function fetchAllSubtitles(
 
     try {
         const opensubsResponsePromise = fetch(apiUrl, {
-            headers: getSubtitleRequestHeaders('application/json'),
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(23000)
         }).then(async res => {
             if (!res.ok) throw new Error(`OpenSubtitles API responded with ${res.status}`);
             return await res.json() as any;
@@ -483,7 +487,6 @@ async function fetchAllSubtitles(
             console.log(`Also fetching Japanese subtitles from: ${butaNoSubsUrl}`);
 
             const butaNoSubsPromise = fetch(butaNoSubsUrl, {
-                headers: getSubtitleRequestHeaders('application/json'),
                 signal: AbortSignal.timeout(10000)
             }).then(async (res) => {
                 if (!res.ok) return { subtitles: [] };
@@ -521,14 +524,6 @@ async function fetchAllSubtitles(
             allSubtitles = allSubtitles.concat(results[1].value.subtitles);
         }
 
-        const missingFallbackLanguageIds = getMissingSubtitleLanguageIds(allSubtitles, fallbackLanguageIds);
-        if (missingFallbackLanguageIds.length > 0) {
-            const fallbackSubtitles = await fetchLegacyOpenSubtitlesFallback(baseSearchParams, type, missingFallbackLanguageIds);
-            if (fallbackSubtitles.length > 0) {
-                allSubtitles = allSubtitles.concat(fallbackSubtitles);
-            }
-        }
-
         if (allSubtitles.length === 0) {
             console.log('No subtitles found from any source.');
             return null;
@@ -539,118 +534,8 @@ async function fetchAllSubtitles(
 
     } catch (error: any) {
         console.error('Error fetching subtitles:', error.message);
-        const fallbackSubtitles = await fetchLegacyOpenSubtitlesFallback(baseSearchParams, type, fallbackLanguageIds);
-        return fallbackSubtitles.length > 0 ? fallbackSubtitles : null;
+        return null;
     }
-}
-
-function getMissingSubtitleLanguageIds(allSubtitles: any[], requestedLanguageIds: string[]): string[] {
-    return requestedLanguageIds.filter(languageId => {
-        const aliases = getLanguageAliases(languageId);
-        return !allSubtitles.some(subtitle => aliases.includes(subtitle.lang));
-    });
-}
-
-async function fetchLegacyOpenSubtitlesFallback(
-    baseSearchParams: { imdbid: string; season?: string; episode?: string },
-    type: string,
-    languageIds: string[]
-): Promise<any[]> {
-    const uniqueLanguageIds = [...new Set(languageIds.flatMap(lang => getLanguageAliases(lang)).filter(Boolean))];
-    if (uniqueLanguageIds.length === 0) return [];
-
-    console.log(`Fetching legacy OpenSubtitles fallback for languages: ${uniqueLanguageIds.join(', ')}`);
-
-    const requests = uniqueLanguageIds.map(async (languageId) => {
-        const searchParams: Record<string, string> = {
-            imdbid: baseSearchParams.imdbid,
-            sublanguageid: languageId
-        };
-
-        if (type === 'series') {
-            if (baseSearchParams.season) searchParams.season = baseSearchParams.season;
-            if (baseSearchParams.episode) searchParams.episode = baseSearchParams.episode;
-        }
-
-        const searchUrl = buildLegacyOpenSubtitlesSearchUrl(searchParams);
-
-        try {
-            const response = await fetch(searchUrl, {
-                headers: getSubtitleRequestHeaders('application/json'),
-                signal: AbortSignal.timeout(10000)
-            });
-
-            if (!response.ok) {
-                console.warn(`Legacy OpenSubtitles fallback responded with ${response.status} for ${languageId}.`);
-                return [];
-            }
-
-            const payload = await response.json() as unknown;
-            if (!Array.isArray(payload)) {
-                console.warn(`Legacy OpenSubtitles fallback returned a non-array payload for ${languageId}.`);
-                return [];
-            }
-
-            return payload
-                .filter(isLegacyOpenSubtitlesSubtitle)
-                .filter(subtitle => {
-                    const format = subtitle.SubFormat?.toLowerCase();
-                    return Boolean(subtitle.SubDownloadLink && format && SUPPORTED_SUBTITLE_FORMATS.has(format));
-                })
-                .map(subtitle => mapLegacyOpenSubtitlesSubtitle(subtitle, languageId));
-        } catch (error: any) {
-            console.warn(`Legacy OpenSubtitles fallback failed for ${languageId}:`, error.message);
-            return [];
-        }
-    });
-
-    const results = await Promise.all(requests);
-    const subtitles = results.flat();
-    if (subtitles.length > 0) {
-        console.log(`Legacy OpenSubtitles fallback found ${subtitles.length} subtitles.`);
-    }
-    return subtitles;
-}
-
-function buildLegacyOpenSubtitlesSearchUrl(params: Record<string, string>): string {
-    const orderedParams: Array<[string, string]> = params.episode
-        ? [
-            ['episode', params.episode],
-            ['imdbid', params.imdbid],
-            ...(params.season ? [['season', params.season] as [string, string]] : []),
-            ['sublanguageid', params.sublanguageid]
-        ]
-        : Object.entries(params);
-
-    const searchPath = orderedParams
-        .map(([key, value]) => `${key}-${encodeLegacyOpenSubtitlesPathValue(value)}`)
-        .join('/');
-
-    return `${LEGACY_OPENSUBTITLES_API_URL}/search/${searchPath}`;
-}
-
-function encodeLegacyOpenSubtitlesPathValue(value: string): string {
-    return encodeURIComponent(value).replace(/%2F/gi, '');
-}
-
-function mapLegacyOpenSubtitlesSubtitle(subtitle: LegacyOpenSubtitlesSubtitle, languageId: string): any {
-    const downloadCount = parseInt(subtitle.SubDownloadsCnt || '0', 10) || 0;
-    const rating = Number.parseFloat(subtitle.SubRating || '0') || 0;
-
-    return {
-        id: subtitle.IDSubtitleFile || `legacy-${crypto.randomUUID()}`,
-        url: subtitle.SubDownloadLink,
-        lang: subtitle.SubLanguageID || languageId,
-        format: subtitle.SubFormat || 'srt',
-        releaseName: subtitle.MovieReleaseName || subtitle.MovieName || 'OpenSubtitles',
-        rating,
-        g: Math.round(rating * 1000) + downloadCount,
-        source: 'OpenSubtitles Legacy'
-    };
-}
-
-function isLegacyOpenSubtitlesSubtitle(value: unknown): value is LegacyOpenSubtitlesSubtitle {
-    return Boolean(value && typeof value === 'object');
 }
 
 function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: string): SubtitleInfo[] | null {
@@ -669,10 +554,10 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
             id: sub.id,
             url: sub.url,
             lang: sub.lang,
-            format: sub.format || 'srt',
+            format: 'srt',
             langName: languageMap[sub.lang as keyof typeof languageMap] || sub.lang,
-            releaseName: sub.releaseName || sub.name || sub.filename || 'OpenSubtitles',
-            rating: Number(sub.rating) || 0,
+            releaseName: 'OpenSubtitles',
+            rating: 0,
             g: parseInt(sub.g) || 0
         };
     });
@@ -690,13 +575,12 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await fetch(url, {
-            headers: getSubtitleRequestHeaders('*/*'),
             signal: AbortSignal.timeout(15000)
         });
         if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);
 
         const arrayBuffer = await response.arrayBuffer();
-        const buffer = await maybeDecompressGzipSubtitle(arrayBuffer, url);
+        const buffer = Buffer.from(arrayBuffer);
 
         let subtitleText = await decodeSubtitleBuffer(buffer, languageCode);
         if (!subtitleText) {
@@ -718,30 +602,6 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
     } catch (error: any) {
         console.error(`Error fetching subtitle content from ${url}:`, error.message);
         return null;
-    }
-}
-
-async function maybeDecompressGzipSubtitle(arrayBuffer: ArrayBuffer, url: string): Promise<Buffer> {
-    const bytes = new Uint8Array(arrayBuffer);
-    const looksGzipped = url.toLowerCase().endsWith('.gz') || (bytes[0] === 0x1f && bytes[1] === 0x8b);
-    if (!looksGzipped) {
-        return Buffer.from(arrayBuffer);
-    }
-
-    const DecompressionStreamCtor = (globalThis as any).DecompressionStream;
-    if (!DecompressionStreamCtor) {
-        console.warn('Received gzip subtitle content, but this runtime does not support DecompressionStream.');
-        return Buffer.from(arrayBuffer);
-    }
-
-    try {
-        const decompressed = await new Response(
-            new Blob([arrayBuffer]).stream().pipeThrough(new DecompressionStreamCtor('gzip'))
-        ).arrayBuffer();
-        return Buffer.from(decompressed);
-    } catch (error: any) {
-        console.warn(`Failed to decompress gzip subtitle content: ${error.message}`);
-        return Buffer.from(arrayBuffer);
     }
 }
 
@@ -1563,8 +1423,7 @@ async function handleSubtitlesRequest(c: any) {
         }
 
         console.log('Fetching all subtitles...');
-        const fallbackLanguageIds = [mainLang, transLang].filter((lang): lang is string => Boolean(lang));
-        const allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese, fallbackLanguageIds);
+        const allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese);
 
         if (!allSubtitles) {
             console.log('Failed to fetch subtitles.');
@@ -1593,7 +1452,12 @@ async function handleSubtitlesRequest(c: any) {
             return res;
         }
 
-        console.log('Using subtitle candidates in original provider response order.');
+        console.log(`Ranking main subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
+        mainSubInfoList = await rankSubtitleInfoList(mainSubInfoList, videoParams.filename);
+
+        console.log(`Ranking translation subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
+        transSubInfoList = await rankSubtitleInfoList(transSubInfoList, videoParams.filename);
+
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
         const storageLazyRequested = getEnvVar(c, 'ENABLE_STORAGE_LAZY_SERVING') === 'true';
