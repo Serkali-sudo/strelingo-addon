@@ -84,19 +84,6 @@ interface S3StorageConfig {
     prefix: string;
 }
 
-const OPEN_SUBTITLES_SEARCH_HEADERS: Record<string, string> = {
-    'Accept-Encoding': 'gzip, deflate, br, zstd',
-    Referer: 'https://web.stremio.com/',
-    Origin: 'https://web.stremio.com',
-    'Sec-Fetch-Dest': '',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site',
-    Connection: 'keep-alive',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:151.0) Gecko/20100101 Firefox/151.0',
-    Accept: '*/*',
-    ad: 'değer'
-};
-
 const SubtitleConverter = {
     toTimeString(ms: number): string {
         const hh = Math.floor(ms / 1000 / 3600);
@@ -487,8 +474,6 @@ async function fetchAllSubtitles(
 
     try {
         const opensubsResponsePromise = fetch(apiUrl, {
-            // Host is derived from apiUrl by fetch; the remaining browser headers mirror web.stremio.com subtitle search requests.
-            headers: OPEN_SUBTITLES_SEARCH_HEADERS,
             signal: AbortSignal.timeout(23000)
         }).then(async res => {
             if (!res.ok) throw new Error(`OpenSubtitles API responded with ${res.status}`);
