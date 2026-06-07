@@ -23,6 +23,18 @@ const DOWNLOAD_TIMEOUT = 10000;
 const MAX_RETRIES = 2;
 
 const OPENSUBTITLES_API = 'https://opensubtitles-v3.strem.io/subtitles';
+const OPENSUBTITLES_SEARCH_HEADERS: Record<string, string> = {
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
+    Referer: 'https://web.stremio.com/',
+    Origin: 'https://web.stremio.com',
+    'Sec-Fetch-Dest': '',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'cross-site',
+    Connection: 'keep-alive',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:151.0) Gecko/20100101 Firefox/151.0',
+    Accept: '*/*',
+    ad: 'değer'
+};
 
 const targetId = process.argv[2];
 
@@ -90,6 +102,7 @@ async function downloadMovie(movie: MovieConfig): Promise<void> {
     try {
         const startTime = Date.now();
         const response = await fetch(searchUrl, {
+            headers: OPENSUBTITLES_SEARCH_HEADERS,
             signal: AbortSignal.timeout(120000)
         });
         if (!response.ok) throw new Error(`API responded with ${response.status}`);
