@@ -103,7 +103,7 @@ interface LegacyOpenSubtitlesSubtitle {
 }
 
 const LEGACY_OPENSUBTITLES_API_URL = 'https://rest.opensubtitles.org';
-const DEFAULT_LEGACY_OPENSUBTITLES_USER_AGENT = 'TemporaryUserAgent';
+const SUBTITLE_REQUEST_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
 
 const SubtitleConverter = {
     toTimeString(ms: number): string {
@@ -425,6 +425,13 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
     }
 }
 
+function getSubtitleRequestHeaders(accept: string): HeadersInit {
+    return {
+        'User-Agent': SUBTITLE_REQUEST_USER_AGENT,
+        'Accept': accept
+    };
+}
+
 // Fetch all subtitles using standard web fetch (axios-free)
 async function fetchAllSubtitles(
     baseSearchParams: { imdbid: string; season?: string; episode?: string },
@@ -462,6 +469,7 @@ async function fetchAllSubtitles(
 
     try {
         const opensubsResponsePromise = fetch(apiUrl, {
+            headers: getSubtitleRequestHeaders('application/json'),
             signal: AbortSignal.timeout(5000)
         }).then(async res => {
             if (!res.ok) throw new Error(`OpenSubtitles API responded with ${res.status}`);
@@ -475,6 +483,7 @@ async function fetchAllSubtitles(
             console.log(`Also fetching Japanese subtitles from: ${butaNoSubsUrl}`);
 
             const butaNoSubsPromise = fetch(butaNoSubsUrl, {
+                headers: getSubtitleRequestHeaders('application/json'),
                 signal: AbortSignal.timeout(10000)
             }).then(async (res) => {
                 if (!res.ok) return { subtitles: [] };
@@ -567,10 +576,7 @@ async function fetchLegacyOpenSubtitlesFallback(
 
         try {
             const response = await fetch(searchUrl, {
-                headers: {
-                    'User-Agent': getEnvVar({}, 'OPENSUBTITLES_USER_AGENT') || DEFAULT_LEGACY_OPENSUBTITLES_USER_AGENT,
-                    'Accept': 'application/json'
-                },
+                headers: getSubtitleRequestHeaders('application/json'),
                 signal: AbortSignal.timeout(10000)
             });
 
@@ -684,6 +690,7 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await fetch(url, {
+            headers: getSubtitleRequestHeaders('*/*'),
             signal: AbortSignal.timeout(15000)
         });
         if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);
