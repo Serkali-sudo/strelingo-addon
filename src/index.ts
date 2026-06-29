@@ -11,6 +11,7 @@ import { Buffer } from 'node:buffer';
 
 import landingTemplate, { Manifest } from './landingTemplate';
 import { decodeSubtitleBuffer, getLanguageAliases } from './encoding';
+import { resolveKitsuToImdb } from './kitsuMapping';
 import {
     mergeSubtitlesByTime,
     rankSubtitleCandidates,
@@ -453,55 +454,27 @@ interface ResolvedVideoId {
     butaId?: string;
 }
 
-// Resolves a Stremio Kitsu ID (e.g. "kitsu:1:6") to an IMDb ID/season/episode using
-// the Anime Kitsu addon's metadata, so OpenSubtitles (which is IMDb-only) can be queried.
-async function resolveKitsuId(type: string, id: string): Promise<ResolvedVideoId | null> {
+// Parses a Stremio Kitsu ID ("kitsu:1" for a movie, "kitsu:1:6" for a series episode) and resolves
+// it to the IMDb id/season/episode OpenSubtitles needs, plus the original ID for buta-no-subs.
+// Uses a bundled static mapping (see ./kitsuMapping) so there is no runtime dependency on a
+// third-party Kitsu metadata server.
+function resolveKitsuId(id: string): ResolvedVideoId | null {
     const parts = id.split(':');
     const kitsuNumericId = parts[1];
     if (!kitsuNumericId) return null;
 
-    const metaType = type === 'movie' ? 'movie' : 'series';
-    const metaUrl = `https://anime-kitsu.strem.fun/meta/${metaType}/kitsu:${encodeURIComponent(kitsuNumericId)}.json`;
-    console.log(`Resolving Kitsu ID via: ${metaUrl}`);
+    // buta-no-subs (Japanese subtitles) accepts the original Kitsu ID as-is.
+    const resolved: ResolvedVideoId = { butaId: id };
 
-    try {
-        // anime-kitsu.strem.fun is behind Cloudflare bot protection, which 403s requests
-        // that don't look like a browser (e.g. a Worker's default fetch). Send browser-like headers.
-        const res = await fetch(metaUrl, {
-            signal: AbortSignal.timeout(10000),
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                'Accept': 'application/json,text/plain,*/*'
-            }
-        });
-        if (!res.ok) throw new Error(`Kitsu meta responded with ${res.status}`);
-        const data = await res.json() as any;
-        const meta = data?.meta;
-        if (!meta) return null;
-
-        // buta-no-subs (Japanese subtitles) accepts the original Kitsu ID as-is.
-        const resolved: ResolvedVideoId = { butaId: id };
-
-        if (metaType === 'series' && parts[2]) {
-            const video = Array.isArray(meta.videos)
-                ? meta.videos.find((v: any) => v && v.id === id)
-                : null;
-            if (video?.imdb_id) {
-                resolved.imdbid = String(video.imdb_id).replace(/^tt/, '');
-                if (video.imdbSeason != null) resolved.season = String(video.imdbSeason);
-                if (video.imdbEpisode != null) resolved.episode = String(video.imdbEpisode);
-            }
-        } else {
-            const imdb = meta.imdb_id
-                || (Array.isArray(meta.videos) && meta.videos[0]?.imdb_id);
-            if (imdb) resolved.imdbid = String(imdb).replace(/^tt/, '');
-        }
-
-        return resolved;
-    } catch (e: any) {
-        console.error(`Failed to resolve Kitsu ID ${id}:`, e.message);
-        return null;
+    const kitsuEpisode = parts[2] !== undefined ? parseInt(parts[2], 10) : undefined;
+    const imdb = resolveKitsuToImdb(kitsuNumericId, Number.isInteger(kitsuEpisode) ? kitsuEpisode : undefined);
+    if (imdb) {
+        resolved.imdbid = imdb.imdbid;
+        resolved.season = imdb.season;
+        resolved.episode = imdb.episode;
     }
+
+    return resolved;
 }
 
 // Fetch all subtitles using standard web fetch (axios-free)
@@ -1443,7 +1416,7 @@ async function handleSubtitlesRequest(c: any) {
     let butaId: string | undefined;
 
     if (id.startsWith('kitsu:')) {
-        const resolved = await resolveKitsuId(type, id);
+        const resolved = resolveKitsuId(id);
         if (!resolved) {
             console.log(`Could not resolve Kitsu ID: ${id}`);
             const res = c.json({ subtitles: [] }, 200, { 'Cache-Control': 'public, max-age=60' });
