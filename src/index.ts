@@ -446,52 +446,109 @@ async function rankSubtitleInfoList(subList: SubtitleInfo[], videoFilename?: str
     return ranked.map(candidate => candidate.sub);
 }
 
+interface ResolvedVideoId {
+    imdbid?: string;
+    season?: string;
+    episode?: string;
+    butaId?: string;
+}
+
+// Resolves a Stremio Kitsu ID (e.g. "kitsu:1:6") to an IMDb ID/season/episode using
+// the Anime Kitsu addon's metadata, so OpenSubtitles (which is IMDb-only) can be queried.
+async function resolveKitsuId(type: string, id: string): Promise<ResolvedVideoId | null> {
+    const parts = id.split(':');
+    const kitsuNumericId = parts[1];
+    if (!kitsuNumericId) return null;
+
+    const metaType = type === 'movie' ? 'movie' : 'series';
+    const metaUrl = `https://anime-kitsu.strem.fun/meta/${metaType}/kitsu:${encodeURIComponent(kitsuNumericId)}.json`;
+    console.log(`Resolving Kitsu ID via: ${metaUrl}`);
+
+    try {
+        const res = await fetch(metaUrl, { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) throw new Error(`Kitsu meta responded with ${res.status}`);
+        const data = await res.json() as any;
+        const meta = data?.meta;
+        if (!meta) return null;
+
+        // buta-no-subs (Japanese subtitles) accepts the original Kitsu ID as-is.
+        const resolved: ResolvedVideoId = { butaId: id };
+
+        if (metaType === 'series' && parts[2]) {
+            const video = Array.isArray(meta.videos)
+                ? meta.videos.find((v: any) => v && v.id === id)
+                : null;
+            if (video?.imdb_id) {
+                resolved.imdbid = String(video.imdb_id).replace(/^tt/, '');
+                if (video.imdbSeason != null) resolved.season = String(video.imdbSeason);
+                if (video.imdbEpisode != null) resolved.episode = String(video.imdbEpisode);
+            }
+        } else {
+            const imdb = meta.imdb_id
+                || (Array.isArray(meta.videos) && meta.videos[0]?.imdb_id);
+            if (imdb) resolved.imdbid = String(imdb).replace(/^tt/, '');
+        }
+
+        return resolved;
+    } catch (e: any) {
+        console.error(`Failed to resolve Kitsu ID ${id}:`, e.message);
+        return null;
+    }
+}
+
 // Fetch all subtitles using standard web fetch (axios-free)
 async function fetchAllSubtitles(
-    baseSearchParams: { imdbid: string; season?: string; episode?: string },
+    baseSearchParams: { imdbid?: string; season?: string; episode?: string; butaId?: string },
     type: string,
     videoParams: { filename?: string; videoSize?: string; videoHash?: string } = {},
     needsJapanese = false
 ): Promise<any[] | null> {
-    const imdbId = `tt${baseSearchParams.imdbid}`;
-    let apiUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${imdbId}`;
+    const promises: Array<Promise<any>> = [];
 
-    if (type === 'series' && baseSearchParams.season && baseSearchParams.episode) {
-        apiUrl += `:${baseSearchParams.season}:${baseSearchParams.episode}`;
+    if (baseSearchParams.imdbid) {
+        const imdbId = `tt${baseSearchParams.imdbid}`;
+        let apiUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${imdbId}`;
+
+        if (type === 'series' && baseSearchParams.season && baseSearchParams.episode) {
+            apiUrl += `:${baseSearchParams.season}:${baseSearchParams.episode}`;
+        }
+
+        const queryParams: string[] = [];
+        if (videoParams.filename) {
+            queryParams.push(`filename=${encodeURIComponent(videoParams.filename)}`);
+        }
+        if (videoParams.videoSize) {
+            queryParams.push(`videoSize=${videoParams.videoSize}`);
+        }
+        if (videoParams.videoHash) {
+            queryParams.push(`videoHash=${videoParams.videoHash}`);
+        }
+
+        if (queryParams.length > 0) {
+            apiUrl += `/${queryParams.join('&')}`;
+        }
+
+        apiUrl += '.json';
+        console.log(`Fetching all subtitles from: ${apiUrl}`);
+
+        promises.push(
+            fetch(apiUrl, {
+                signal: AbortSignal.timeout(23000)
+            }).then(async res => {
+                if (!res.ok) throw new Error(`OpenSubtitles API responded with ${res.status}`);
+                return await res.json() as any;
+            })
+        );
     } else {
-        // apiUrl += `:${videoParams.videoHash || '0'}`;
+        console.log('No IMDb ID available; skipping OpenSubtitles lookup.');
+        promises.push(Promise.resolve({ subtitles: [] }));
     }
-
-    const queryParams: string[] = [];
-    if (videoParams.filename) {
-        queryParams.push(`filename=${encodeURIComponent(videoParams.filename)}`);
-    }
-    if (videoParams.videoSize) {
-        queryParams.push(`videoSize=${videoParams.videoSize}`);
-    }
-    if (videoParams.videoHash) {
-        queryParams.push(`videoHash=${videoParams.videoHash}`);
-    }
-
-    if (queryParams.length > 0) {
-        apiUrl += `/${queryParams.join('&')}`;
-    }
-
-    apiUrl += '.json';
-    console.log(`Fetching all subtitles from: ${apiUrl}`);
 
     try {
-        const opensubsResponsePromise = fetch(apiUrl, {
-            signal: AbortSignal.timeout(23000)
-        }).then(async res => {
-            if (!res.ok) throw new Error(`OpenSubtitles API responded with ${res.status}`);
-            return await res.json() as any;
-        });
-
-        const promises: Array<Promise<any>> = [opensubsResponsePromise];
-
         if (needsJapanese) {
-            const butaNoSubsUrl = `https://buta-no-subs-stremio-addon.onrender.com/subtitles/${type}/tt${baseSearchParams.imdbid}${(baseSearchParams.season) ? ":" + baseSearchParams.season + ":" + baseSearchParams.episode : ""}.json`;
+            const butaIdSegment = baseSearchParams.butaId
+                || `tt${baseSearchParams.imdbid}${(baseSearchParams.season) ? ":" + baseSearchParams.season + ":" + baseSearchParams.episode : ""}`;
+            const butaNoSubsUrl = `https://buta-no-subs-stremio-addon.onrender.com/subtitles/${type}/${butaIdSegment}.json`;
             console.log(`Also fetching Japanese subtitles from: ${butaNoSubsUrl}`);
 
             const butaNoSubsPromise = fetch(butaNoSubsUrl, {
@@ -708,7 +765,7 @@ function getManifest(addonName: string): Manifest {
         resources: ['subtitles'],
         subtitleExtra: ['videoHash', 'videoSize', 'filename'],
         types: ['movie', 'series'],
-        idPrefixes: ['tt'],
+        idPrefixes: ['tt', 'kitsu'],
         logo: 'https://raw.githubusercontent.com/Serkali-sudo/strelingo-addon/refs/heads/main/assets/strelingo_icon.jpg',
         background: 'https://raw.githubusercontent.com/Serkali-sudo/strelingo-addon/refs/heads/main/assets/strelingo_back.jpg',
         catalogs: [],
@@ -1375,8 +1432,23 @@ async function handleSubtitlesRequest(c: any) {
     let imdbId = id;
     let season: string | undefined;
     let episode: string | undefined;
+    let butaId: string | undefined;
 
-    if (imdbId.includes(':')) {
+    if (id.startsWith('kitsu:')) {
+        const resolved = await resolveKitsuId(type, id);
+        if (!resolved) {
+            console.log(`Could not resolve Kitsu ID: ${id}`);
+            const res = c.json({ subtitles: [] }, 200, { 'Cache-Control': 'public, max-age=60' });
+            putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
+            return res;
+        }
+        // buta-no-subs queries by the native Kitsu ID; OpenSubtitles needs the mapped IMDb ID.
+        butaId = resolved.butaId;
+        season = resolved.season;
+        episode = resolved.episode;
+        imdbId = resolved.imdbid ? `tt${resolved.imdbid}` : '';
+        console.log(`Resolved Kitsu ID ${id} -> imdb=${imdbId || 'none'}, season=${season}, episode=${episode}`);
+    } else if (imdbId.includes(':')) {
         const parts = imdbId.split(':');
         imdbId = parts[0];
         if (parts.length >= 3) {
@@ -1395,6 +1467,9 @@ async function handleSubtitlesRequest(c: any) {
     const baseSearchParams: any = {
         imdbid: imdbId.replace('tt', '')
     };
+    if (butaId) {
+        baseSearchParams.butaId = butaId;
+    }
     if (type === 'series' && season && episode) {
         baseSearchParams.season = season;
         baseSearchParams.episode = episode;
