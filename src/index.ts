@@ -465,7 +465,15 @@ async function resolveKitsuId(type: string, id: string): Promise<ResolvedVideoId
     console.log(`Resolving Kitsu ID via: ${metaUrl}`);
 
     try {
-        const res = await fetch(metaUrl, { signal: AbortSignal.timeout(10000) });
+        // anime-kitsu.strem.fun is behind Cloudflare bot protection, which 403s requests
+        // that don't look like a browser (e.g. a Worker's default fetch). Send browser-like headers.
+        const res = await fetch(metaUrl, {
+            signal: AbortSignal.timeout(10000),
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': 'application/json,text/plain,*/*'
+            }
+        });
         if (!res.ok) throw new Error(`Kitsu meta responded with ${res.status}`);
         const data = await res.json() as any;
         const meta = data?.meta;
