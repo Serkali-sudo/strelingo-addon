@@ -9,9 +9,21 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Buffer } from 'node:buffer';
 
+import { unzipSync } from 'fflate';
+
 import landingTemplate, { Manifest } from './landingTemplate';
 import { decodeSubtitleBuffer, getLanguageAliases } from './encoding';
 import { resolveKitsuToImdb } from './kitsuMapping';
+import {
+    OPTIONAL_PROVIDERS,
+    WYZIE_SOURCES,
+    fetchOptionalProviderSubtitles,
+    hasAnyOptionalProvider,
+    parseOptionalProviderConfig,
+    resolveRequestedLangs,
+    type ProviderSub,
+    type RequestedLang
+} from './providers';
 import {
     mergeSubtitlesByTime,
     rankSubtitleCandidates,
@@ -61,9 +73,24 @@ const browserLanguageMap: Record<string, string> = {
 
 const languageOptions = Object.entries(languageMap).map(([code, name]) => `${name} [${code}]`);
 
-interface SubtitleInfo extends SubtitleCandidate {}
+interface SubtitleInfo extends SubtitleCandidate {
+    // Optional metadata for the API-key providers (see src/providers.ts),
+    // carried through to download time. Built-in OpenSubtitles subs leave these unset.
+    provider?: string;
+    apiKey?: string;
+    season?: string;
+    episode?: string;
+}
 
 interface SRTLine extends SubtitleCue {}
+
+// Extra download-time hints for a subtitle source: auth headers (SubSource) and
+// the season/episode used to pick the right file out of a zipped season pack.
+interface SubtitleFetchOptions {
+    headers?: Record<string, string>;
+    season?: string;
+    episode?: string;
+}
 
 interface LazySubtitlePayload {
     v: 1;
@@ -76,6 +103,11 @@ interface LazySubtitlePayload {
     transLang: string;
     storageFileName?: string;
     s3Key?: string;
+    // Optional download-time hints for API-key providers (SubSource/SubDL zips).
+    mainApiKey?: string;
+    transApiKey?: string;
+    season?: string;
+    episode?: string;
 }
 
 interface S3StorageConfig {
@@ -595,16 +627,21 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
         return null;
     }
 
-    const subtitleList = langSubs.map((sub) => {
+    const subtitleList: SubtitleInfo[] = langSubs.map((sub) => {
         return {
             id: sub.id,
             url: sub.url,
             lang: sub.lang,
-            format: 'srt',
+            // Provider subs carry their own format/release; OpenSubtitles subs keep the defaults.
+            format: sub.format || 'srt',
             langName: languageMap[sub.lang as keyof typeof languageMap] || sub.lang,
-            releaseName: 'OpenSubtitles',
+            releaseName: sub.releaseName || 'OpenSubtitles',
             rating: 0,
-            g: parseInt(sub.g) || 0
+            g: parseInt(sub.g) || 0,
+            ...(sub.provider ? { provider: sub.provider } : {}),
+            ...(sub.apiKey ? { apiKey: sub.apiKey } : {}),
+            ...(sub.season ? { season: sub.season } : {}),
+            ...(sub.episode ? { episode: sub.episode } : {})
         };
     });
 
@@ -612,7 +649,73 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
     return subtitleList;
 }
 
-async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageCode: string | null = null): Promise<string | null> {
+const SUBTITLE_EXT_PRIORITY = ['srt', 'ass', 'ssa', 'vtt', 'sub', 'sbv', 'smi', 'lrc', 'ttml', 'dfxp'];
+
+function isZipBuffer(buffer: Buffer): boolean {
+    // ZIP local-file / central-dir / end-of-central-dir magic: 'PK' + (03 04 | 05 06 | 07 08)
+    return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B
+        && (buffer[2] === 0x03 || buffer[2] === 0x05 || buffer[2] === 0x07)
+        && (buffer[3] === 0x04 || buffer[3] === 0x06 || buffer[3] === 0x08);
+}
+
+function pickZipSubtitleEntry(names: string[], season?: string, episode?: string): string | null {
+    const subs = names.filter(n => {
+        const ext = n.split('.').pop()?.toLowerCase();
+        return ext ? SUBTITLE_EXT_PRIORITY.includes(ext) : false;
+    });
+    if (subs.length === 0) return null;
+
+    if (season && episode) {
+        const s = parseInt(season, 10);
+        const ep = parseInt(episode, 10);
+        const patterns = [
+            new RegExp(`s0*${s}\\s*[._ -]?\\s*e0*${ep}(?!\\d)`, 'i'),
+            new RegExp(`(?:^|[^0-9])0*${s}\\s*x\\s*0*${ep}(?!\\d)`, 'i'),
+            new RegExp(`\\be0*${ep}(?!\\d)`, 'i')
+        ];
+        for (const re of patterns) {
+            const hit = subs.find(n => re.test(n));
+            if (hit) return hit;
+        }
+    }
+
+    // No episode match: prefer the highest-priority extension, then the shortest name.
+    subs.sort((a, b) => {
+        const ea = SUBTITLE_EXT_PRIORITY.indexOf(a.split('.').pop()!.toLowerCase());
+        const eb = SUBTITLE_EXT_PRIORITY.indexOf(b.split('.').pop()!.toLowerCase());
+        if (ea !== eb) return ea - eb;
+        return a.length - b.length;
+    });
+    return subs[0];
+}
+
+// Extract a single subtitle file (and its format) from a zip archive. Used for
+// providers that deliver zipped subtitles (SubSource, SubDL season packs).
+function extractSubtitleFromZip(buffer: Buffer, season?: string, episode?: string): { buffer: Buffer; format: string } | null {
+    let entries: Record<string, Uint8Array>;
+    try {
+        entries = unzipSync(new Uint8Array(buffer));
+    } catch (e: any) {
+        console.warn('Failed to unzip subtitle archive:', e.message);
+        return null;
+    }
+    const names = Object.keys(entries).filter(name => !name.endsWith('/'));
+    const chosen = pickZipSubtitleEntry(names, season, episode);
+    if (!chosen) {
+        console.warn('Zip archive contained no recognizable subtitle file.');
+        return null;
+    }
+    console.log(`Selected "${chosen}" from zip archive (${names.length} entr${names.length === 1 ? 'y' : 'ies'}).`);
+    const ext = chosen.split('.').pop()?.toLowerCase() || 'srt';
+    return { buffer: Buffer.from(entries[chosen]), format: ext };
+}
+
+async function fetchSubtitleContent(
+    url: string,
+    sourceFormat = 'srt',
+    languageCode: string | null = null,
+    options: SubtitleFetchOptions = {}
+): Promise<string | null> {
     if (!isSafeSubtitleUrl(url)) {
         console.error(`Rejected unsafe subtitle URL: ${url}`);
         return null;
@@ -621,12 +724,24 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await fetch(url, {
+            headers: options.headers,
             signal: AbortSignal.timeout(15000)
         });
         if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);
 
         const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
+        let buffer = Buffer.from(arrayBuffer);
+
+        // Some providers deliver zipped subtitles; extract the right file before decoding.
+        if (isZipBuffer(buffer)) {
+            const extracted = extractSubtitleFromZip(buffer, options.season, options.episode);
+            if (!extracted) {
+                console.error('Could not extract a subtitle from the downloaded archive.');
+                return null;
+            }
+            buffer = extracted.buffer;
+            sourceFormat = extracted.format;
+        }
 
         let subtitleText = await decodeSubtitleBuffer(buffer, languageCode);
         if (!subtitleText) {
@@ -649,6 +764,16 @@ async function fetchSubtitleContent(url: string, sourceFormat = 'srt', languageC
         console.error(`Error fetching subtitle content from ${url}:`, error.message);
         return null;
     }
+}
+
+// Build download-time options (auth header + zip episode hint) from a provider
+// subtitle's metadata. Returns an empty object for the key-less default sources.
+function subtitleFetchOptions(meta: { apiKey?: string; season?: string; episode?: string }): SubtitleFetchOptions {
+    const options: SubtitleFetchOptions = {};
+    if (meta.apiKey) options.headers = { 'X-API-Key': meta.apiKey };
+    if (meta.season) options.season = meta.season;
+    if (meta.episode) options.episode = meta.episode;
+    return options;
 }
 
 // Merges two arrays of parsed subtitles based on time
@@ -774,9 +899,68 @@ function getManifest(addonName: string): Manifest {
                 options: languageOptions,
                 required: true,
                 default: 'English [eng]'
+            },
+            // Optional, API-key subtitle providers. All optional — leave a field
+            // blank to keep that provider disabled. The two sources above are the
+            // built-in defaults and are unaffected by these.
+            {
+                key: OPTIONAL_PROVIDERS.subdl.key,
+                type: 'password',
+                title: OPTIONAL_PROVIDERS.subdl.title,
+                description: OPTIONAL_PROVIDERS.subdl.help,
+                section: 'Optional Providers (API key required)',
+                link: { label: 'Get key', url: OPTIONAL_PROVIDERS.subdl.getKeyUrl }
+            },
+            {
+                key: OPTIONAL_PROVIDERS.wyzie.key,
+                type: 'password',
+                title: OPTIONAL_PROVIDERS.wyzie.title,
+                description: OPTIONAL_PROVIDERS.wyzie.help,
+                link: { label: 'Get key', url: OPTIONAL_PROVIDERS.wyzie.getKeyUrl }
+            },
+            {
+                key: OPTIONAL_PROVIDERS.wyzie.sourcesKey,
+                type: 'multiselect',
+                title: OPTIONAL_PROVIDERS.wyzie.sourcesTitle,
+                description: OPTIONAL_PROVIDERS.wyzie.sourcesHelp,
+                options: WYZIE_SOURCES.map(s => ({ ...s }))
+            },
+            {
+                key: OPTIONAL_PROVIDERS.subsource.key,
+                type: 'password',
+                title: OPTIONAL_PROVIDERS.subsource.title,
+                description: OPTIONAL_PROVIDERS.subsource.help,
+                link: { label: 'Get key', url: OPTIONAL_PROVIDERS.subsource.getKeyUrl }
+            },
+            {
+                key: OPTIONAL_PROVIDERS.mode.key,
+                type: 'select',
+                title: OPTIONAL_PROVIDERS.mode.title,
+                options: [...OPTIONAL_PROVIDERS.mode.options],
+                description: OPTIONAL_PROVIDERS.mode.help,
+                default: OPTIONAL_PROVIDERS.mode.options[0]
             }
         ]
     };
+}
+
+// Stremio's manifest config schema only knows text/number/password/checkbox/select.
+// Map our custom multiselect to text and drop the page-only `description`/`section`
+// fields so the served manifest.json stays valid; the /configure HTML page renders
+// the full rich config separately.
+function toStremioSafeConfig(config?: Manifest['config']): Manifest['config'] {
+    if (!config) return config;
+    return config.map(item => {
+        const { description, section, link, ...rest } = item as any;
+        const safe: any = { ...rest };
+        if (safe.type === 'multiselect') {
+            safe.type = 'text';
+            delete safe.options;
+        } else if (Array.isArray(safe.options)) {
+            safe.options = safe.options.map((o: any) => (typeof o === 'string' ? o : o.value));
+        }
+        return safe;
+    });
 }
 
 const app = new Hono();
@@ -786,7 +970,9 @@ app.use('*', cors());
 // Manifest route handlers
 app.get('/manifest.json', (c) => {
     const addonName = getEnvVar(c, 'ADDON_NAME') || 'Strelingo - Dual Language Subtitles';
-    return c.json(getManifest(addonName));
+    const manifest = getManifest(addonName);
+    manifest.config = toStremioSafeConfig(manifest.config);
+    return c.json(manifest);
 });
 
 app.get('/:config/manifest.json', (c) => {
@@ -825,6 +1011,7 @@ app.get('/:config/manifest.json', (c) => {
         manifest.name = `${manifest.name} (${mainLangCode}+${transLangCode})`;
     }
 
+    manifest.config = toStremioSafeConfig(manifest.config);
     return c.json(manifest);
 });
 
@@ -1042,6 +1229,10 @@ function validateLazySubtitlePayload(payload: any): LazySubtitlePayload {
     const s3Key = payload.s3Key === undefined
         ? undefined
         : normalizeStorageKey(payload.s3Key);
+    const mainApiKey = payload.mainApiKey === undefined ? undefined : normalizeProviderApiKey(payload.mainApiKey);
+    const transApiKey = payload.transApiKey === undefined ? undefined : normalizeProviderApiKey(payload.transApiKey);
+    const season = payload.season === undefined ? undefined : normalizeSeasonEpisode(payload.season);
+    const episode = payload.episode === undefined ? undefined : normalizeSeasonEpisode(payload.episode);
 
     return {
         v: 1,
@@ -1053,8 +1244,28 @@ function validateLazySubtitlePayload(payload: any): LazySubtitlePayload {
         transFormat,
         transLang,
         storageFileName,
-        s3Key
+        s3Key,
+        mainApiKey,
+        transApiKey,
+        season,
+        episode
     };
+}
+
+function normalizeProviderApiKey(key: unknown): string {
+    const value = String(key || '').trim();
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(value)) {
+        throw Object.assign(new Error('Invalid provider API key in payload'), { status: 400 });
+    }
+    return value;
+}
+
+function normalizeSeasonEpisode(value: unknown): string {
+    const str = String(value || '').trim();
+    if (!/^\d{1,4}$/.test(str)) {
+        throw Object.assign(new Error('Invalid season/episode in payload'), { status: 400 });
+    }
+    return str;
 }
 
 function normalizeSubtitleFormat(format: unknown): string {
@@ -1342,13 +1553,16 @@ async function storeMergedSubtitle(
 }
 
 async function buildMergedSubtitleSrt(params: LazySubtitlePayload): Promise<string> {
-    const mainSubContent = await fetchSubtitleContent(params.mainUrl, params.mainFormat, params.mainLang);
+    const mainOptions = subtitleFetchOptions({ apiKey: params.mainApiKey, season: params.season, episode: params.episode });
+    const transOptions = subtitleFetchOptions({ apiKey: params.transApiKey, season: params.season, episode: params.episode });
+
+    const mainSubContent = await fetchSubtitleContent(params.mainUrl, params.mainFormat, params.mainLang, mainOptions);
     if (!mainSubContent) throw new Error("Failed to fetch main subtitle");
 
     const mainParsed = parseSrt(mainSubContent);
     if (!mainParsed) throw new Error("Failed to parse main subtitle");
 
-    const transSubContent = await fetchSubtitleContent(params.transUrl, params.transFormat, params.transLang);
+    const transSubContent = await fetchSubtitleContent(params.transUrl, params.transFormat, params.transLang, transOptions);
     if (!transSubContent) throw new Error("Failed to fetch translation subtitle");
 
     const transParsed = parseSrt(transSubContent);
@@ -1487,13 +1701,30 @@ async function handleSubtitlesRequest(c: any) {
         }
 
         console.log('Fetching all subtitles...');
-        const allSubtitles = await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese);
+        // Built-in OpenSubtitles/Buta-no-subs results; null (error/none) is treated
+        // as empty so optional providers can still satisfy the request on their own.
+        let allSubtitles: any[] = (await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese)) || [];
 
-        if (!allSubtitles) {
-            console.log('Failed to fetch subtitles.');
-            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
-            return res;
+        // Optional, API-key providers (SubDL / Wyzie / SubSource). Lazily resolves
+        // the requested languages into the per-provider forms only when needed.
+        const optionalCfg = parseOptionalProviderConfig(configObj);
+        const optionalEnabled = hasAnyOptionalProvider(optionalCfg);
+        let requestedLangs: RequestedLang[] = [];
+        const fetchProviderSubs = async (): Promise<ProviderSub[]> => {
+            if (!optionalEnabled) return [];
+            if (requestedLangs.length === 0) {
+                requestedLangs = await resolveRequestedLangs(
+                    [mainLang || 'eng', transLang || 'eng'],
+                    (code3) => languageMap[code3 as keyof typeof languageMap] || code3
+                );
+            }
+            return fetchOptionalProviderSubtitles({ imdbId, type, season, episode, langs: requestedLangs }, optionalCfg);
+        };
+
+        if (optionalEnabled && optionalCfg.mode === 'parallel') {
+            console.log('Optional providers: parallel mode — querying alongside the defaults.');
+            const providerSubs = await fetchProviderSubs();
+            if (providerSubs.length > 0) allSubtitles = allSubtitles.concat(providerSubs);
         }
 
         console.log(`Filtering for main language: ${mainLang}`);
@@ -1501,6 +1732,19 @@ async function handleSubtitlesRequest(c: any) {
 
         console.log(`Filtering for translation language: ${transLang}`);
         let transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
+
+        // Fallback mode: only reach out to optional providers when the built-in
+        // sources didn't supply both a main and a translation subtitle.
+        if (optionalEnabled && optionalCfg.mode === 'fallback'
+            && ((mainSubInfoList?.length ?? 0) === 0 || (transSubInfoList?.length ?? 0) === 0)) {
+            console.log('Optional providers: fallback mode — defaults incomplete, querying providers.');
+            const providerSubs = await fetchProviderSubs();
+            if (providerSubs.length > 0) {
+                allSubtitles = allSubtitles.concat(providerSubs);
+                mainSubInfoList = filterSubtitlesByLanguage(allSubtitles, mainLang || 'eng');
+                transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
+            }
+        }
 
         if (!mainSubInfoList || mainSubInfoList.length === 0) {
             console.log(`No main language (${mainLang}) subtitles found.`);
@@ -1540,7 +1784,7 @@ async function handleSubtitlesRequest(c: any) {
         } else {
             for (const mainSubInfo of mainSubInfoList) {
                 console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, g=${mainSubInfo.g}`);
-                const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang);
+                const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang, subtitleFetchOptions(mainSubInfo));
 
                 if (!mainSubContent) {
                     console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
@@ -1604,7 +1848,12 @@ async function handleSubtitlesRequest(c: any) {
                     transFormat: transSubInfo.format || 'srt',
                     transLang: transSubInfo.lang || transLang || 'eng',
                     storageFileName: storageLazyServingEnabled ? srtFileName : undefined,
-                    s3Key: storageLazyServingEnabled ? s3Key : undefined
+                    s3Key: storageLazyServingEnabled ? s3Key : undefined,
+                    // Provider auth + zip hints so the signed serve endpoint can re-fetch.
+                    mainApiKey: selectedMainSubInfo.apiKey,
+                    transApiKey: transSubInfo.apiKey,
+                    season: (selectedMainSubInfo.season || transSubInfo.season || (type === 'series' ? season : undefined)),
+                    episode: (selectedMainSubInfo.episode || transSubInfo.episode || (type === 'series' ? episode : undefined))
                 };
 
                 const signedToken = await createSignedSubtitlePayload(c, paramsObj);
@@ -1624,7 +1873,7 @@ async function handleSubtitlesRequest(c: any) {
                 }
 
                 if (!uploadUrl) {
-                    const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang);
+                    const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang, subtitleFetchOptions(transSubInfo));
 
                     if (!transSubContent) {
                         console.warn(`Failed to fetch content for translation v${version}. Skipping.`);

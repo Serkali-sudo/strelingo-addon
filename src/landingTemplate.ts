@@ -501,6 +501,97 @@ body::after {
     cursor: pointer;
 }
 
+.field-help {
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--text-dim);
+    margin-top: 6px;
+}
+
+.field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.field-label-row label {
+    margin-bottom: 0;
+}
+
+.get-key-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    color: var(--accent-light);
+    background: rgba(138, 90, 171, 0.12);
+    border: 1px solid rgba(138, 90, 171, 0.3);
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.get-key-btn:hover {
+    background: rgba(138, 90, 171, 0.25);
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.get-key-btn svg {
+    width: 11px;
+    height: 11px;
+}
+
+.multiselect {
+    width: 100%;
+}
+
+.ms-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ms-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 11px;
+    font-size: 12.5px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+
+.ms-chip:hover {
+    border-color: rgba(138, 90, 171, 0.5);
+    color: var(--text);
+}
+
+.ms-chip input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.ms-chip:has(input:checked) {
+    background: rgba(138, 90, 171, 0.18);
+    border-color: var(--accent);
+    color: var(--text);
+}
+
 .actions {
     display: flex;
     gap: 10px;
@@ -661,11 +752,17 @@ export interface Manifest {
     };
     config?: Array<{
         key: string;
-        type: 'text' | 'number' | 'password' | 'checkbox' | 'select';
+        type: 'text' | 'number' | 'password' | 'checkbox' | 'select' | 'multiselect';
         title: string;
         required?: boolean;
         default?: string;
-        options?: string[];
+        options?: Array<string | { value: string; label: string }>;
+        /** Optional helper text rendered under the field (e.g. usage limits). */
+        description?: string;
+        /** Optional section heading rendered before this field. */
+        section?: string;
+        /** Optional "get the key" link rendered next to the field label. */
+        link?: { label: string; url: string };
     }>;
     githubUrl?: string;
 }
@@ -689,16 +786,40 @@ export default function landingTemplate(manifest: Manifest): string {
 
     if ((manifest.config || []).length) {
         let options = '';
+        let lastSection = '';
+        const normalizeOptions = (opts: any): Array<{ value: string; label: string }> =>
+            (opts || []).map((o: any) => (typeof o === 'string' ? { value: o, label: o } : o));
         manifest.config?.forEach(elem => {
             const key = elem.key;
+
+            // Section heading (rendered once when the section changes).
+            if (elem.section && elem.section !== lastSection) {
+                lastSection = elem.section;
+                options += `
+                <div class="divider"></div>
+                <div class="section-label">${elem.section}</div>`;
+            }
+
+            const helpHTML = elem.description
+                ? `<div class="field-help">${elem.description}</div>`
+                : '';
+
+            const linkHTML = elem.link
+                ? `<a class="get-key-btn" href="${elem.link.url}" target="_blank" rel="noopener noreferrer">${elem.link.label}<svg width="11" height="11" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 3h7v7M13 3L6.5 9.5M11 9.5V13H3V5h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a>`
+                : '';
+
             if (['text', 'number', 'password'].includes(elem.type)) {
                 const isRequired = elem.required ? ' required' : '';
                 const defaultHTML = elem.default ? ` value="${elem.default}"` : '';
                 const inputType = elem.type;
                 options += `
                 <div class="form-group">
-                    <label for="${key}">${elem.title}</label>
+                    <div class="field-label-row">
+                        <label for="${key}">${elem.title}</label>
+                        ${linkHTML}
+                    </div>
                     <input type="${inputType}" id="${key}" name="${key}"${defaultHTML}${isRequired}/>
+                    ${helpHTML}
                 </div>`;
             } else if (elem.type === 'checkbox') {
                 const isChecked = elem.default === 'checked' ? ' checked' : '';
@@ -708,14 +829,16 @@ export default function landingTemplate(manifest: Manifest): string {
                         <input type="checkbox" id="${key}" name="${key}"${isChecked}/>
                         <span class="checkbox-label">${elem.title}</span>
                     </label>
+                    ${helpHTML}
                 </div>`;
             } else if (elem.type === 'select') {
-                const defaultValue = elem.default || (elem.options || [])[0];
-                const selections = elem.options || [];
+                const selections = normalizeOptions(elem.options);
+                const defaultValue = elem.default || (selections[0] ? selections[0].value : '');
+                const defaultLabel = (selections.find((o: any) => o.value === defaultValue) || {}).label || defaultValue;
                 let optionsHTML = '';
-                selections.forEach(el => {
-                    const isSelected = el === defaultValue;
-                    optionsHTML += `<div class="custom-option${isSelected ? ' selected' : ''}" data-value="${el}"><span class="option-label">${el}</span></div>`;
+                selections.forEach((el: any) => {
+                    const isSelected = el.value === defaultValue;
+                    optionsHTML += `<div class="custom-option${isSelected ? ' selected' : ''}" data-value="${el.value}"><span class="option-label">${el.label}</span></div>`;
                 });
                 options += `
                 <div class="form-group">
@@ -723,13 +846,31 @@ export default function landingTemplate(manifest: Manifest): string {
                     <div class="custom-select-wrapper" data-key="${key}">
                         <input type="hidden" id="${key}" name="${key}" value="${defaultValue || ''}">
                         <div class="custom-select-trigger" tabindex="0">
-                            <span class="select-value">${defaultValue || 'Select...'}</span>
+                            <span class="select-value">${defaultLabel || 'Select...'}</span>
                             <span class="select-arrow"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
                         </div>
                         <div class="custom-select-options">
                             ${optionsHTML}
                         </div>
                     </div>
+                    ${helpHTML}
+                </div>`;
+            } else if (elem.type === 'multiselect') {
+                const selections = normalizeOptions(elem.options);
+                const selectedSet = new Set(String(elem.default || '').split(',').map(s => s.trim()).filter(Boolean));
+                let chipsHTML = '';
+                selections.forEach((el: any) => {
+                    const isChecked = selectedSet.has(el.value) ? ' checked' : '';
+                    chipsHTML += `<label class="ms-chip"><input type="checkbox" value="${el.value}"${isChecked}/><span>${el.label}</span></label>`;
+                });
+                options += `
+                <div class="form-group">
+                    <label>${elem.title}</label>
+                    <div class="multiselect" data-key="${key}">
+                        <input type="hidden" id="${key}" name="${key}" value="${[...selectedSet].join(',')}">
+                        <div class="ms-options">${chipsHTML}</div>
+                    </div>
+                    ${helpHTML}
                 </div>`;
             }
         });
@@ -796,8 +937,24 @@ export default function landingTemplate(manifest: Manifest): string {
                 });
             });
 
+            // Multi-select chips (e.g. Wyzie sources): collect checked values into
+            // the single comma-separated hidden input that FormData submits.
+            document.querySelectorAll('.multiselect').forEach(ms => {
+                const hiddenInput = ms.querySelector('input[type="hidden"]');
+                const boxes = ms.querySelectorAll('.ms-options input[type="checkbox"]');
+                boxes.forEach(box => {
+                    box.addEventListener('change', () => {
+                        const selected = Array.from(boxes).filter(b => b.checked).map(b => b.value);
+                        hiddenInput.value = selected.join(',');
+                        hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    });
+                });
+            });
+
             const updateLink = () => {
-                const config = Object.fromEntries(new FormData(mainForm))
+                const config = Object.fromEntries(
+                    Array.from(new FormData(mainForm).entries()).filter(([, v]) => String(v).trim() !== '')
+                )
                 const configPath = '/' + encodeURIComponent(JSON.stringify(config))
                 const manifestPath = configPath + '/manifest.json'
 
