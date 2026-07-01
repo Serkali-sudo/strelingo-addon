@@ -130,4 +130,4 @@ Tests validate that decoded subtitles contain expected native-language strings (
 *   **Subtitle Parsing:** `srt-parser-2` + built-in multi-format converter
 *   **Gzip Decompression:** `pako`
 *   **Character Encoding Detection:** `chardet`
-*   **Character Encoding Decoding:** `iconv-lite`
+*   **Character Encoding Decoding:** `iconv-lite` 
