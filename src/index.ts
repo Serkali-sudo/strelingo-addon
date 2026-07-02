@@ -104,7 +104,7 @@ interface LazySubtitlePayload {
     transLang: string;
     storageFileName?: string;
     s3Key?: string;
-    // Optional download-time hints for API-key providers (SubSource/SubDL zips).
+    // Optional download-time hints for API-key providers (SubSource zips).
     mainApiKey?: string;
     transApiKey?: string;
     season?: string;
@@ -691,7 +691,7 @@ function pickZipSubtitleEntry(names: string[], season?: string, episode?: string
 }
 
 // Extract a single subtitle file (and its format) from a zip archive. Used for
-// providers that deliver zipped subtitles (SubSource, SubDL season packs).
+// providers that deliver zipped subtitles (SubSource).
 function extractSubtitleFromZip(buffer: Buffer, season?: string, episode?: string): { buffer: Buffer; format: string } | null {
     let entries: Record<string, Uint8Array>;
     try {
@@ -905,18 +905,11 @@ function getManifest(addonName: string): Manifest {
             // blank to keep that provider disabled. The two sources above are the
             // built-in defaults and are unaffected by these.
             {
-                key: OPTIONAL_PROVIDERS.subdl.key,
-                type: 'password',
-                title: OPTIONAL_PROVIDERS.subdl.title,
-                description: OPTIONAL_PROVIDERS.subdl.help,
-                section: 'Optional Providers (API key required)',
-                link: { label: 'Get key', url: OPTIONAL_PROVIDERS.subdl.getKeyUrl }
-            },
-            {
                 key: OPTIONAL_PROVIDERS.wyzie.key,
                 type: 'password',
                 title: OPTIONAL_PROVIDERS.wyzie.title,
                 description: OPTIONAL_PROVIDERS.wyzie.help,
+                section: 'Optional Providers (API key required)',
                 link: { label: 'Get key', url: OPTIONAL_PROVIDERS.wyzie.getKeyUrl }
             },
             {
@@ -1706,7 +1699,7 @@ async function handleSubtitlesRequest(c: any) {
         // as empty so optional providers can still satisfy the request on their own.
         let allSubtitles: any[] = (await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese)) || [];
 
-        // Optional, API-key providers (SubDL / Wyzie / SubSource). Lazily resolves
+        // Optional, API-key providers (Wyzie / SubSource). Lazily resolves
         // the requested languages into the per-provider forms only when needed.
         const optionalCfg = parseOptionalProviderConfig(configObj);
         const optionalEnabled = hasAnyOptionalProvider(optionalCfg);

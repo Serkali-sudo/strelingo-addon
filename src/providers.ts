@@ -2,7 +2,10 @@ import { normalizeLanguageCode } from './encoding';
 import { cloudscraperFetch, describeCloudflareBlock } from './cloudscraper';
 
 // ---------------------------------------------------------------------------
-// Optional, API-key-gated subtitle providers (SubDL, Wyzie, SubSource).
+// Optional, API-key-gated subtitle providers (Wyzie, SubSource).
+//
+// A direct SubDL provider was dropped: SubDL's free API hard-403s server-side
+// requests behind Cloudflare. SubDL is still reachable via Wyzie's `subdl` source.
 //
 // These are layered ON TOP of the addon's two built-in, key-less sources
 // (OpenSubtitles + Buta-no-subs) which live in src/index.ts and are NOT touched
@@ -14,14 +17,14 @@ import { cloudscraperFetch, describeCloudflareBlock } from './cloudscraper';
 const PROVIDER_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_PROVIDER = 20;
 
-// Provider hosts (SubDL, dl.subdl.com) sit behind Cloudflare, whose WAF 403s
-// requests that don't look like a real browser. All provider HTTP traffic goes
-// through cloudscraperFetch(), which supplies a rotating browser header profile.
+// Some provider hosts sit behind Cloudflare, whose WAF 403s requests that don't
+// look like a real browser. All provider HTTP traffic goes through
+// cloudscraperFetch(), which supplies a rotating browser header profile.
 
 // A resolved language the caller wants, in the three forms the providers need.
 export interface RequestedLang {
     code3: string;   // addon-internal 3-letter code, e.g. 'eng', 'pob'
-    code2: string;   // ISO 639-1 2-letter, e.g. 'en'   (Wyzie / SubDL)
+    code2: string;   // ISO 639-1 2-letter, e.g. 'en'   (Wyzie)
     name: string;    // English language name lowercased, e.g. 'english' (SubSource)
 }
 
@@ -44,7 +47,6 @@ export interface ProviderSub {
 }
 
 export interface OptionalProviderConfig {
-    subdlKey: string;
     wyzieKey: string;
     wyzieSources: string[];
     subsourceKey: string;
@@ -81,12 +83,6 @@ export const WYZIE_SOURCES: Array<{ value: string; label: string }> = [
 // manifest/config builder in src/index.ts so the install form and the fetch
 // logic stay in sync.
 export const OPTIONAL_PROVIDERS = {
-    subdl: {
-        key: 'subdlApiKey',
-        title: 'SubDL API key',
-        help: 'Optional. Free tier: 2,000 searches/day, 50 downloads/day.',
-        getKeyUrl: 'https://subdl.com/panel/api'
-    },
     wyzie: {
         key: 'wyzieApiKey',
         sourcesKey: 'wyzieSources',
@@ -125,7 +121,6 @@ export function parseOptionalProviderConfig(configObj: any): OptionalProviderCon
             : [];
 
     return {
-        subdlKey: String(configObj?.[OPTIONAL_PROVIDERS.subdl.key] || '').trim(),
         wyzieKey: String(configObj?.[OPTIONAL_PROVIDERS.wyzie.key] || '').trim(),
         wyzieSources,
         subsourceKey: String(configObj?.[OPTIONAL_PROVIDERS.subsource.key] || '').trim(),
@@ -134,7 +129,7 @@ export function parseOptionalProviderConfig(configObj: any): OptionalProviderCon
 }
 
 export function hasAnyOptionalProvider(cfg: OptionalProviderConfig): boolean {
-    return Boolean(cfg.subdlKey || cfg.wyzieKey || cfg.subsourceKey);
+    return Boolean(cfg.wyzieKey || cfg.subsourceKey);
 }
 
 // Build the {code3, code2, name} triples the providers need from the addon's
@@ -234,108 +229,10 @@ async function fetchWyzie(params: ProviderSearchParams, cfg: OptionalProviderCon
     return out.slice(0, MAX_RESULTS_PER_PROVIDER);
 }
 
-// ---------------------------------------------------------------------------
-// SubDL  (https://api.subdl.com/api/v1) — the public API: key goes in the
-// `api_key` query param. A subtitle's top-level `url` is a zip
-// ("/subtitle/xxx-yyy.zip"); with unpack=1, packed/full-season subtitles also
-// expose `unpack_files[]` with direct raw single-file URLs
-// ("/subtitle/{n_id}/{file_n_id}") plus per-file language/season/episode/format —
-// which we prefer so we can hand back the exact episode without unzipping.
-// ---------------------------------------------------------------------------
-function subdlDownloadUrl(rawUrl: unknown): string | null {
-    if (typeof rawUrl === 'string' && rawUrl) {
-        if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
-        return `https://dl.subdl.com${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
-    }
-    return null;
-}
-
-async function fetchSubdl(params: ProviderSearchParams, cfg: OptionalProviderConfig): Promise<ProviderSub[]> {
-    if (!cfg.subdlKey) return [];
-
-    const qs = new URLSearchParams();
-    qs.set('api_key', cfg.subdlKey);
-    qs.set('imdb_id', params.imdbId);
-    // SubDL v1 expects upper-case 2-letter codes, e.g. EN,TR.
-    qs.set('languages', params.langs.map(l => l.code2.toUpperCase()).join(','));
-    qs.set('subs_per_page', '30');
-    qs.set('unpack', '1');
-    if (params.type === 'series' && params.season) {
-        qs.set('type', 'tv');
-        qs.set('season_number', params.season);
-        if (params.episode) qs.set('episode_number', params.episode);
-    } else {
-        qs.set('type', 'movie');
-    }
-
-    const data = await fetchJson(`https://api.subdl.com/api/v1/subtitles?${qs.toString()}`);
-    if (data && data.status === false) {
-        throw new Error(`SubDL error: ${data.error || 'request rejected'}`);
-    }
-    const items: any[] = Array.isArray(data?.subtitles) ? data.subtitles : [];
-
-    const wantSeason = params.season ? parseInt(params.season, 10) : null;
-    const wantEpisode = params.episode ? parseInt(params.episode, 10) : null;
-    // v1 returns `language` as an upper-case code (e.g. "EN") and `lang` as the
-    // full name (e.g. "english"); match against whichever a record carries.
-    const matchLang = (code: unknown, name?: unknown): RequestedLang | undefined => {
-        const up = String(code || '').toUpperCase();
-        const low = String(name || '').toLowerCase();
-        return params.langs.find(l =>
-            (up && l.code2.toUpperCase() === up) || (low && (l.name === low || l.code3 === low)));
-    };
-
-    const out: ProviderSub[] = [];
-    for (const item of items) {
-        const files: any[] | null = Array.isArray(item.unpack_files) ? item.unpack_files : null;
-
-        if (files && files.length) {
-            // Packed/full-season subtitle: use the pre-extracted single files.
-            for (const f of files) {
-                const match = matchLang(f.language, f.lang);
-                if (!match) continue;
-                // For a specific episode, keep only that episode's file.
-                if (params.type === 'series' && wantEpisode != null) {
-                    if (Number(f.episode) !== wantEpisode) continue;
-                    if (wantSeason != null && f.season != null && Number(f.season) !== wantSeason) continue;
-                }
-                const url = subdlDownloadUrl(f.url);
-                if (!url) continue;
-                out.push({
-                    id: `subdl-${f.file_n_id ?? out.length}`,
-                    url,
-                    lang: match.code3,
-                    g: 0,
-                    format: String(f.format || 'srt').toLowerCase(),
-                    releaseName: `SubDL: ${f.release_name || f.name || item.release_name || 'pack'}`,
-                    provider: 'subdl'
-                    // Direct raw file — no zip/episode hint needed.
-                });
-                if (out.length >= MAX_RESULTS_PER_PROVIDER) break;
-            }
-        } else {
-            // Single subtitle: the top-level url is a zip. fetchSubtitleContent()
-            // auto-unzips it, using the episode hint to pick the file for packs.
-            const match = matchLang(item.language, item.lang);
-            if (!match) continue;
-            const url = subdlDownloadUrl(item.url);
-            if (!url) continue;
-            out.push({
-                id: `subdl-${item.url || out.length}`,
-                url,
-                lang: match.code3,
-                g: Number(item.downloads) || 0,
-                format: 'srt',
-                releaseName: `SubDL: ${item.release_name || item.name || 'SubDL'}`,
-                provider: 'subdl',
-                season: params.season,
-                episode: params.episode
-            });
-        }
-        if (out.length >= MAX_RESULTS_PER_PROVIDER) break;
-    }
-    return out.slice(0, MAX_RESULTS_PER_PROVIDER);
-}
+// Note: a direct SubDL provider used to live here, but SubDL's free API sits
+// behind a Cloudflare WAF that hard-403s server-side requests (no solvable
+// challenge), so it was removed. SubDL coverage is still available indirectly via
+// Wyzie's `subdl` source.
 
 // ---------------------------------------------------------------------------
 // SubSource (https://api.subsource.net) — X-API-Key header; downloads are always
@@ -424,7 +321,6 @@ export async function fetchOptionalProviderSubtitles(
 
     const tasks: Array<Promise<ProviderSub[]>> = [];
     if (cfg.wyzieKey) tasks.push(fetchWyzie(params, cfg));
-    if (cfg.subdlKey) tasks.push(fetchSubdl(params, cfg));
     if (cfg.subsourceKey) tasks.push(fetchSubsource(params, cfg));
 
     const settled = await Promise.allSettled(tasks);
