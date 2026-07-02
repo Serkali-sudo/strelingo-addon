@@ -13,9 +13,17 @@ import { normalizeLanguageCode } from './encoding';
 const PROVIDER_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_PROVIDER = 20;
 
-// Several provider hosts (SubDL, dl.subdl.com) sit behind Cloudflare and 403
-// requests that arrive without a browser-like User-Agent.
-export const PROVIDER_USER_AGENT = 'Mozilla/5.0 (compatible; StrelingoAddon/1.0; +https://github.com/Serkali-sudo/strelingo-addon)';
+// Several provider hosts (SubDL, dl.subdl.com) sit behind Cloudflare, whose WAF
+// 403s requests that don't look like a real browser. A bot-ish User-Agent is
+// enough to get blocked, so we present a normal Chrome UA + browser headers.
+export const PROVIDER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+// Extra headers a browser sends that help clear Cloudflare's bot checks.
+export const BROWSER_LIKE_HEADERS: Record<string, string> = {
+    'User-Agent': PROVIDER_USER_AGENT,
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9'
+};
 
 // A resolved language the caller wants, in the three forms the providers need.
 export interface RequestedLang {
@@ -156,7 +164,7 @@ export async function resolveRequestedLangs(
 
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<any> {
     const res = await fetch(url, {
-        headers: { 'User-Agent': PROVIDER_USER_AGENT, 'Accept': 'application/json', ...headers },
+        headers: { ...BROWSER_LIKE_HEADERS, ...headers },
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS)
     });
     if (!res.ok) {

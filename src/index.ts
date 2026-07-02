@@ -725,7 +725,12 @@ async function fetchSubtitleContent(
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await fetch(url, {
-            headers: { 'User-Agent': PROVIDER_USER_AGENT, ...options.headers },
+            headers: {
+                'User-Agent': PROVIDER_USER_AGENT,
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                ...options.headers
+            },
             signal: AbortSignal.timeout(15000)
         });
         if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);
