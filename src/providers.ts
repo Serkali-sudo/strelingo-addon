@@ -319,19 +319,22 @@ export async function fetchOptionalProviderSubtitles(
 ): Promise<ProviderSub[]> {
     if (!hasAnyOptionalProvider(cfg) || params.langs.length === 0) return [];
 
-    const tasks: Array<Promise<ProviderSub[]>> = [];
-    if (cfg.wyzieKey) tasks.push(fetchWyzie(params, cfg));
-    if (cfg.subsourceKey) tasks.push(fetchSubsource(params, cfg));
+    const tasks: Array<{ name: string; promise: Promise<ProviderSub[]> }> = [];
+    if (cfg.wyzieKey) tasks.push({ name: 'Wyzie', promise: fetchWyzie(params, cfg) });
+    if (cfg.subsourceKey) tasks.push({ name: 'SubSource', promise: fetchSubsource(params, cfg) });
 
-    const settled = await Promise.allSettled(tasks);
+    const settled = await Promise.allSettled(tasks.map(t => t.promise));
     const all: ProviderSub[] = [];
-    for (const r of settled) {
+    const summary: string[] = [];
+    settled.forEach((r, i) => {
+        const name = tasks[i].name;
         if (r.status === 'fulfilled') {
             all.push(...r.value);
+            summary.push(`${name}: ${r.value.length}`);
         } else {
-            console.warn('Optional provider failed:', r.reason?.message || r.reason);
+            summary.push(`${name}: failed (${r.reason?.message || r.reason})`);
         }
-    }
-    console.log(`Optional providers returned ${all.length} subtitle candidate(s).`);
+    });
+    console.log(`[optional] ${summary.join(', ')} — ${all.length} total`);
     return all;
 }

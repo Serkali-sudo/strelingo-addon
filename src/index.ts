@@ -347,7 +347,7 @@ const SubtitleConverter = {
 
             if (captions.length > 0) return this.buildSrt(captions);
         } catch (e: any) {
-            console.error(`Subtitle conversion error for ${format}:`, e.message);
+            console.error(`[convert] ${format} failed:`, e.message);
         }
         return null;
     }
@@ -508,7 +508,6 @@ async function fetchAllSubtitles(
         }
 
         apiUrl += '.json';
-        console.log(`Fetching all subtitles from: ${apiUrl}`);
 
         promises.push(
             fetch(apiUrl, {
@@ -528,7 +527,6 @@ async function fetchAllSubtitles(
             const butaIdSegment = baseSearchParams.butaId
                 || `tt${baseSearchParams.imdbid}${(baseSearchParams.season) ? ":" + baseSearchParams.season + ":" + baseSearchParams.episode : ""}`;
             const butaNoSubsUrl = `https://buta-no-subs-stremio-addon.onrender.com/subtitles/${type}/${butaIdSegment}.json`;
-            console.log(`Also fetching Japanese subtitles from: ${butaNoSubsUrl}`);
 
             const butaNoSubsPromise = fetch(butaNoSubsUrl, {
                 signal: AbortSignal.timeout(10000)
@@ -559,25 +557,27 @@ async function fetchAllSubtitles(
         }
 
         let allSubtitles: any[] = [];
+        let osCount = 0;
+        let butaCount = 0;
 
         if (results[0].status === 'fulfilled' && results[0].value && results[0].value.subtitles) {
+            osCount = results[0].value.subtitles.length;
             allSubtitles = allSubtitles.concat(results[0].value.subtitles);
         }
 
         if (needsJapanese && results[1] && results[1].status === 'fulfilled' && results[1].value?.subtitles) {
+            butaCount = results[1].value.subtitles.length;
             allSubtitles = allSubtitles.concat(results[1].value.subtitles);
         }
 
-        if (allSubtitles.length === 0) {
-            console.log('No subtitles found from any source.');
-            return null;
-        }
+        const parts = [`OpenSubtitles: ${osCount}`];
+        if (needsJapanese) parts.push(`Buta-no-subs: ${butaCount}`);
+        console.log(`[sources] ${parts.join(', ')}`);
 
-        console.log(`Found ${allSubtitles.length} total subtitles from all sources.`);
-        return allSubtitles;
+        return allSubtitles.length > 0 ? allSubtitles : null;
 
     } catch (error: any) {
-        console.error('Error fetching subtitles:', error.message);
+        console.error('[sources] fetch failed:', error.message);
         return null;
     }
 }
@@ -589,7 +589,6 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
     const langSubs = allSubtitles.filter(sub => codesToMatch.includes(sub.lang));
 
     if (langSubs.length === 0) {
-        console.log(`No subtitles found for language ${languageId}.`);
         return null;
     }
 
@@ -611,7 +610,6 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
         };
     });
 
-    console.log(`Found ${subtitleList.length} valid subtitles for ${languageId}.`);
     return subtitleList;
 }
 
@@ -662,16 +660,16 @@ function extractSubtitleFromZip(buffer: Buffer, season?: string, episode?: strin
     try {
         entries = unzipSync(new Uint8Array(buffer));
     } catch (e: any) {
-        console.warn('Failed to unzip subtitle archive:', e.message);
+        console.warn('[zip] unzip failed:', e.message);
         return null;
     }
     const names = Object.keys(entries).filter(name => !name.endsWith('/'));
     const chosen = pickZipSubtitleEntry(names, season, episode);
     if (!chosen) {
-        console.warn('Zip archive contained no recognizable subtitle file.');
+        console.warn('[zip] no subtitle file in archive');
         return null;
     }
-    console.log(`Selected "${chosen}" from zip archive (${names.length} entr${names.length === 1 ? 'y' : 'ies'}).`);
+    console.log(`[zip] picked "${chosen}" of ${names.length}`);
     const ext = chosen.split('.').pop()?.toLowerCase() || 'srt';
     return { buffer: Buffer.from(entries[chosen]), format: ext };
 }
@@ -683,17 +681,16 @@ async function fetchSubtitleContent(
     options: SubtitleFetchOptions = {}
 ): Promise<string | null> {
     if (!isSafeSubtitleUrl(url)) {
-        console.error(`Rejected unsafe subtitle URL: ${url}`);
+        console.error(`[content] rejected unsafe URL: ${url}`);
         return null;
     }
 
-    console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await cloudscraperFetch(url, {
             headers: options.headers,
             signal: AbortSignal.timeout(15000)
         });
-        if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);
+        if (!response.ok) throw new Error(`fetch responded with ${response.status}`);
 
         const arrayBuffer = await response.arrayBuffer();
         let buffer = Buffer.from(arrayBuffer);
@@ -701,33 +698,29 @@ async function fetchSubtitleContent(
         // Some providers deliver zipped subtitles; extract the right file before decoding.
         if (isZipBuffer(buffer)) {
             const extracted = extractSubtitleFromZip(buffer, options.season, options.episode);
-            if (!extracted) {
-                console.error('Could not extract a subtitle from the downloaded archive.');
-                return null;
-            }
+            if (!extracted) return null;
             buffer = extracted.buffer;
             sourceFormat = extracted.format;
         }
 
         let subtitleText = await decodeSubtitleBuffer(buffer, languageCode);
         if (!subtitleText) {
-            console.error(`Decoding/validation failed (possibly wrong language or encoding issue)`);
+            console.warn(`[content] decode/validation failed (wrong language or encoding)`);
             return null;
         }
 
         if (sourceFormat.toLowerCase() !== 'srt') {
-            console.log(`Converting subtitle from ${sourceFormat} to srt.`);
             const convertedSrt = SubtitleConverter.convert(subtitleText, sourceFormat);
             if (convertedSrt) {
                 subtitleText = convertedSrt;
             } else {
-                console.warn(`Converter returned empty for format ${sourceFormat}. Attempting fallback as-is.`);
+                console.warn(`[content] converter returned empty for ${sourceFormat}; using as-is`);
             }
         }
 
         return subtitleText;
     } catch (error: any) {
-        console.error(`Error fetching subtitle content from ${url}:`, error.message);
+        console.warn(`[content] fetch failed (${url}): ${error.message}`);
         return null;
     }
 }
@@ -744,10 +737,7 @@ function subtitleFetchOptions(meta: { apiKey?: string; season?: string; episode?
 
 // Merges two arrays of parsed subtitles based on time
 function mergeSubtitles(mainSubs: SRTLine[], transSubs: SRTLine[], mergeThresholdMs = 500): SRTLine[] {
-    console.log(`Merging ${mainSubs.length} main subs with ${transSubs.length} translation subs.`);
-    const mergedSubs = mergeSubtitlesByTime(mainSubs, transSubs, mergeThresholdMs);
-    console.log(`Finished merging. Result has ${mergedSubs.length} entries.`);
-    return mergedSubs;
+    return mergeSubtitlesByTime(mainSubs, transSubs, mergeThresholdMs);
 }
 
 // Formats an array of subtitle objects back into SRT text
@@ -780,7 +770,6 @@ function parseSrt(srtText: string): SRTLine[] | null {
     try {
         const parser = new SRTParser2();
         if (srtText.charCodeAt(0) === 0xFEFF) {
-            console.log("Found BOM in parseSrt, removing it.");
             srtText = srtText.substring(1);
         }
         srtText = srtText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -799,27 +788,19 @@ function parseSrt(srtText: string): SRTLine[] | null {
         );
 
         if (originalCount > subtitles.length) {
-            console.log(`Adblocker: Removed ${originalCount - subtitles.length} subtitle line(s) containing ads.`);
+            console.log(`[adblock] removed ${originalCount - subtitles.length} ad line(s)`);
         }
 
         if (subtitles.length === 0 && srtText.trim().length > 0) {
-            console.warn("Parsing resulted in an empty array despite non-empty input.");
+            console.warn("[parse] empty result despite non-empty input");
             return null;
-        }
-
-        if (subtitles.length > 0) {
-            const firstText = subtitles[0].text.replace(/[\r\n]+/g, ' ');
-            console.log(`First parsed subtitle text by SRTParser2: [${firstText}]`);
-        } else {
-            console.log("SRTParser2 returned an empty array.");
         }
 
         if (subtitles.length > 0 && (!subtitles[0].startTime || !subtitles[0].text)) {
-            console.warn("Parsed structure seems invalid (missing startTime or text in first entry).");
+            console.warn("[parse] invalid structure (missing startTime or text)");
             return null;
         }
 
-        console.log(`Parsed ${subtitles.length} subtitle entries.`);
         return subtitles as SRTLine[];
     } catch (error: any) {
         console.error('Error parsing SRT:', error.message);
@@ -1543,12 +1524,10 @@ async function handleSubtitlesRequest(c: any) {
     const id = stripJsonExtension(c.req.param('idAndMaybeJson') || c.req.param('id'));
     const extraParam = stripJsonExtension(c.req.param('extraAndMaybeJson') || c.req.param('extra'));
 
-    console.log('Strelingo Subtitle request:', { type, id, extraParam, configParam });
-
     const cacheKey = configParam ? makeCacheKey(c.req.url) : null;
     const cachedSearch = await getCachedResponse(cacheKey);
     if (cachedSearch) {
-        console.log("Subtitle search cache hit! Serving from edge cache.");
+        console.log(`[request] ${type} ${id} — cache hit`);
         return cachedSearch;
     }
 
@@ -1556,7 +1535,6 @@ async function handleSubtitlesRequest(c: any) {
     const acceptLang = c.req.header('accept-language');
     if (acceptLang) {
         browserLanguageCode = extractBrowserLanguageFromHeader(acceptLang);
-        console.log(`Detected browser language: ${browserLanguageCode}`);
     }
 
     let configObj: any = {};
@@ -1564,7 +1542,7 @@ async function handleSubtitlesRequest(c: any) {
         try {
             configObj = JSON.parse(decodeURIComponent(configParam));
         } catch (e) {
-            console.error("Failed to parse config from subtitles request:", e);
+            console.error("[request] failed to parse config:", e);
         }
     }
 
@@ -1574,10 +1552,10 @@ async function handleSubtitlesRequest(c: any) {
     const mainLang = parseLangCode(mainLangRaw);
     const transLang = parseLangCode(transLangRaw);
 
-    console.log(`Selected Languages: Main=${mainLang}, Translation=${transLang}`);
+    console.log(`[request] ${type} ${id} — main=${mainLang}, trans=${transLang}`);
 
     if (mainLang === transLang) {
-        console.log(`Error: Main language (${mainLang}) and Translation language (${transLang}) cannot be the same. Aborting.`);
+        console.log(`[request] aborted: main and translation language are the same (${mainLang})`);
         const res = c.json({ subtitles: [], cacheMaxAge: 3600 }, 200, { 'Cache-Control': 'public, max-age=3600' });
         putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
         return res;
@@ -1591,7 +1569,7 @@ async function handleSubtitlesRequest(c: any) {
     if (id.startsWith('kitsu:')) {
         const resolved = resolveKitsuId(id);
         if (!resolved) {
-            console.log(`Could not resolve Kitsu ID: ${id}`);
+            console.log(`[request] could not resolve Kitsu id ${id}`);
             const res = c.json({ subtitles: [] }, 200, { 'Cache-Control': 'public, max-age=60' });
             putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
             return res;
@@ -1601,7 +1579,7 @@ async function handleSubtitlesRequest(c: any) {
         season = resolved.season;
         episode = resolved.episode;
         imdbId = resolved.imdbid ? `tt${resolved.imdbid}` : '';
-        console.log(`Resolved Kitsu ID ${id} -> imdb=${imdbId || 'none'}, season=${season}, episode=${episode}`);
+        console.log(`[request] resolved ${id} -> imdb=${imdbId || 'none'} s=${season} e=${episode}`);
     } else if (imdbId.includes(':')) {
         const parts = imdbId.split(':');
         imdbId = parts[0];
@@ -1612,7 +1590,7 @@ async function handleSubtitlesRequest(c: any) {
     }
 
     if (!imdbId || !imdbId.startsWith('tt')) {
-        console.log('No valid IMDB ID provided');
+        console.log(`[request] no valid IMDb id (${id})`);
         const res = c.json({ subtitles: [] }, 200, { 'Cache-Control': 'public, max-age=60' });
         putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
         return res;
@@ -1638,28 +1616,11 @@ async function handleSubtitlesRequest(c: any) {
                 videoParams[key] = decodeURIComponent(value);
             }
         }
-        console.log('Video matching parameters parsed:', videoParams);
-    }
-
-    const skipVercelBlob = getEnvVar(c, 'SKIP_VERCEL_BLOB') === 'true';
-    if (skipVercelBlob) {
-        console.log("SKIP_VERCEL_BLOB is true, Vercel Blob upload will be skipped.");
-    }
-
-    const s3Storage = getS3StorageConfig(c);
-    if (s3Storage) {
-        console.log("S3-compatible storage initialized.");
-    } else {
-        console.warn("S3-compatible storage is not fully configured.");
     }
 
     try {
         const needsJapanese = mainLang === 'jpn' || transLang === 'jpn';
-        if (needsJapanese) {
-            console.log('Japanese language detected, will fetch from Buta no Subs too.');
-        }
 
-        console.log('Fetching all subtitles...');
         // Built-in OpenSubtitles/Buta-no-subs results; null (error/none) is treated
         // as empty so optional providers can still satisfy the request on their own.
         let allSubtitles: any[] = (await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese)) || [];
@@ -1681,22 +1642,18 @@ async function handleSubtitlesRequest(c: any) {
         };
 
         if (optionalEnabled && optionalCfg.mode === 'parallel') {
-            console.log('Optional providers: parallel mode — querying alongside the defaults.');
             const providerSubs = await fetchProviderSubs();
             if (providerSubs.length > 0) allSubtitles = allSubtitles.concat(providerSubs);
         }
 
-        console.log(`Filtering for main language: ${mainLang}`);
         let mainSubInfoList = filterSubtitlesByLanguage(allSubtitles, mainLang || 'eng');
-
-        console.log(`Filtering for translation language: ${transLang}`);
         let transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
 
         // Fallback mode: only reach out to optional providers when the built-in
         // sources didn't supply both a main and a translation subtitle.
         if (optionalEnabled && optionalCfg.mode === 'fallback'
             && ((mainSubInfoList?.length ?? 0) === 0 || (transSubInfoList?.length ?? 0) === 0)) {
-            console.log('Optional providers: fallback mode — defaults incomplete, querying providers.');
+            console.log('[optional] fallback mode — defaults incomplete, querying providers');
             const providerSubs = await fetchProviderSubs();
             if (providerSubs.length > 0) {
                 allSubtitles = allSubtitles.concat(providerSubs);
@@ -1705,15 +1662,17 @@ async function handleSubtitlesRequest(c: any) {
             }
         }
 
+        console.log(`[filter] main ${mainLang}: ${mainSubInfoList?.length ?? 0}, trans ${transLang}: ${transSubInfoList?.length ?? 0}`);
+
         if (!mainSubInfoList || mainSubInfoList.length === 0) {
-            console.log(`No main language (${mainLang}) subtitles found.`);
+            console.log(`[result] no ${mainLang} (main) subtitles — returning empty`);
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
             putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
             return res;
         }
 
         if (!transSubInfoList || transSubInfoList.length === 0) {
-            console.warn(`No translation language (${transLang}) subtitles found.`);
+            console.log(`[result] no ${transLang} (trans) subtitles — returning empty`);
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
             putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
             return res;
@@ -1730,51 +1689,35 @@ async function handleSubtitlesRequest(c: any) {
         const storageLazyServingEnabled = !directServingEnabled && storageLazyRequested && hasPayloadSigningSecret;
         const lazyServingEnabled = (directServingEnabled || storageLazyServingEnabled) && hasPayloadSigningSecret;
         if ((directServingEnabled || storageLazyRequested) && !hasPayloadSigningSecret) {
-            console.warn('Lazy serving is enabled, but no subtitle payload signing secret is configured. Set SUBTITLE_PAYLOAD_SECRET.');
+            console.warn('[serve] lazy serving enabled but SUBTITLE_PAYLOAD_SECRET is not set');
         }
         let selectedMainSubInfo: SubtitleInfo | null = null;
         let mainParsed: SRTLine[] | null = null;
 
         if (lazyServingEnabled) {
             selectedMainSubInfo = mainSubInfoList[0];
-            console.log(`Lazy serving: selected main subtitle ID=${selectedMainSubInfo.id}, g=${selectedMainSubInfo.g}`);
         } else {
             for (const mainSubInfo of mainSubInfoList) {
-                console.log(`Attempting to process main subtitle: ID=${mainSubInfo.id}, g=${mainSubInfo.g}`);
                 const mainSubContent = await fetchSubtitleContent(mainSubInfo.url, mainSubInfo.format, mainSubInfo.lang, subtitleFetchOptions(mainSubInfo));
+                if (!mainSubContent) continue;
 
-                if (!mainSubContent) {
-                    console.warn(`Failed to fetch content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
-                    continue;
-                }
-
-                console.log("Parsing main subtitle content...");
                 const parsed = parseSrt(mainSubContent);
-                if (!parsed) {
-                    console.warn(`Failed to parse content for main sub ID ${mainSubInfo.id}. Trying next candidate.`);
-                    continue;
-                }
+                if (!parsed) continue;
 
                 mainParsed = parsed;
                 selectedMainSubInfo = mainSubInfo;
-                console.log(`Successfully processed main subtitle (ID: ${selectedMainSubInfo.id}). Proceeding with translations.`);
                 break;
             }
         }
 
-        if (!selectedMainSubInfo) {
-            console.error("Failed to fetch and parse any of the available main subtitles. Cannot proceed.");
+        if (!selectedMainSubInfo || (!lazyServingEnabled && !mainParsed)) {
+            console.log('[result] no usable main subtitle — returning empty');
             const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
             putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
             return res;
         }
 
-        if (!lazyServingEnabled && !mainParsed) {
-            console.error("Failed to parse any of the available main subtitles. Cannot proceed.");
-            const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
-            putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
-            return res;
-        }
+        console.log(`[main] selected ${selectedMainSubInfo.releaseName} (id=${selectedMainSubInfo.id})`);
 
         const finalSubtitles = [];
         const usedTransUrls = new Set();
@@ -1785,7 +1728,6 @@ async function handleSubtitlesRequest(c: any) {
             usedTransUrls.add(transSubInfo.url);
 
             const version = finalSubtitles.length + 1;
-            console.log(`Processing translation candidate v${version} (ID: ${transSubInfo.id})...`);
 
             let uploadUrl: string | null = null;
             let subtitleEntryId = `merged-${selectedMainSubInfo.id}-${transSubInfo.id}`;
@@ -1794,7 +1736,6 @@ async function handleSubtitlesRequest(c: any) {
             const s3Key = buildS3SubtitleKey(getEnvVar(c, 'S3_PREFIX') || '', storagePath);
 
             if (lazyServingEnabled) {
-                console.log(`Generating signed lazy subtitle URL for v${version}...`);
                 const workerUrl = (getEnvVar(c, 'EXTERNAL_URL') || `${new URL(c.req.url).protocol}//${new URL(c.req.url).host}`).replace(/\/+$/g, '');
 
                 const paramsObj = {
@@ -1815,47 +1756,30 @@ async function handleSubtitlesRequest(c: any) {
 
                 const signedToken = await createSignedSubtitlePayload(c, paramsObj);
                 if (!signedToken) {
-                    console.warn(`Failed to sign lazy subtitle payload for v${version}. Skipping.`);
+                    console.warn(`[serve] failed to sign lazy payload v${version}, skipping`);
                     continue;
                 }
                 uploadUrl = `${workerUrl}/serve-subtitles/${signedToken}/${srtFileName}`;
                 subtitleEntryId += directServingEnabled ? '-direct' : '-lazy';
             } else {
-                console.log(`Checking storage cache for v${version}...`);
                 const existingStoredSubtitle = await findExistingStoredSubtitleUrl(c, srtFileName, s3Key);
                 if (existingStoredSubtitle) {
-                    console.log(`Storage cache hit for v${version}: ${existingStoredSubtitle.url}`);
                     uploadUrl = existingStoredSubtitle.url;
                     subtitleEntryId += existingStoredSubtitle.suffix;
                 }
 
                 if (!uploadUrl) {
                     const transSubContent = await fetchSubtitleContent(transSubInfo.url, transSubInfo.format, transSubInfo.lang, subtitleFetchOptions(transSubInfo));
-
-                    if (!transSubContent) {
-                        console.warn(`Failed to fetch content for translation v${version}. Skipping.`);
-                        continue;
-                    }
+                    if (!transSubContent) continue;
 
                     const transParsed = parseSrt(transSubContent);
-                    if (!transParsed) {
-                        console.warn(`Failed to parse content for translation v${version}. Skipping.`);
-                        continue;
-                    }
+                    if (!transParsed) continue;
 
-                    console.log(`Merging main with translation v${version}...`);
                     const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
-                    if (!mergedParsed || mergedParsed.length === 0) {
-                        console.warn(`Merging failed or resulted in empty subtitles for v${version}. Skipping.`);
-                        continue;
-                    }
+                    if (!mergedParsed || mergedParsed.length === 0) continue;
 
-                    console.log(`Formatting merged SRT for v${version}...`);
                     const mergedSrtString = formatSrt(mergedParsed);
-                    if (!mergedSrtString) {
-                        console.warn(`Failed to format merged SRT for v${version}. Skipping.`);
-                        continue;
-                    }
+                    if (!mergedSrtString) continue;
 
                     const storedSubtitle = await storeMergedSubtitle(c, srtFileName, s3Key, mergedSrtString);
                     if (storedSubtitle) {
@@ -1873,14 +1797,10 @@ async function handleSubtitlesRequest(c: any) {
                     lang: readableLang,
                     label: readableLang
                 });
-            } else {
-                console.warn(`Failed to serve or store v${version}.`);
             }
         }
 
-        if (finalSubtitles.length === 0) {
-            console.warn("Processed translation candidates, but none resulted in a usable subtitle file. Returning empty.");
-        }
+        console.log(`[result] returning ${finalSubtitles.length} merged subtitle(s)`);
 
         const successResponse = c.json({
             subtitles: finalSubtitles,
@@ -1893,7 +1813,7 @@ async function handleSubtitlesRequest(c: any) {
         return successResponse;
 
     } catch (e: any) {
-        console.error('Error in subtitle handler:', e.message);
+        console.error('[error] subtitle handler:', e.message);
         const res = c.json({ subtitles: [], cacheMaxAge: 60 }, 200, { 'Cache-Control': 'public, max-age=60' });
         putCachedResponse(cacheKey, res, getOptionalExecutionCtx(c));
         return res;
@@ -1909,15 +1829,13 @@ app.get('/serve-subtitles/:token/:filename', async (c) => {
     const cacheKey = makeCacheKey(c.req.url);
     const cachedResponse = await getCachedResponse(cacheKey);
     if (cachedResponse) {
-        console.log("Subtitle Cache Hit! Serving from edge cache.");
+        console.log('[serve] cache hit');
         return cachedResponse;
     }
 
     try {
         const params = await verifySignedSubtitlePayload(c, token);
-        const { mainUrl, transUrl, storageFileName, s3Key } = params;
-
-        console.log(`Direct subtitle serve request. Main: ${mainUrl}, Trans: ${transUrl}`);
+        const { storageFileName, s3Key } = params;
 
         if (storageFileName && s3Key) {
             const existingStoredSubtitle = await findExistingStoredSubtitleUrl(c, storageFileName, s3Key);
@@ -1946,7 +1864,7 @@ app.get('/serve-subtitles/:token/:filename', async (c) => {
         return response;
 
     } catch (e: any) {
-        console.error(`Direct subtitle serving failed: ${e.message}`);
+        console.error(`[serve] failed: ${e.message}`);
         return c.text(`Subtitle serving failed: ${e.message}`, e.status || 500);
     }
 });
