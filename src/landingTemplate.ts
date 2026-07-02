@@ -31,12 +31,19 @@ html, body {
 
 body {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     padding: 24px;
     background: linear-gradient(135deg, #0d0b1a 0%, #1a1030 40%, #0d0b1a 100%);
     position: relative;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.card {
+    /* auto margins keep the card centered while still allowing the page to scroll
+       when the form is taller than the viewport (flex centering alone clips the top). */
+    margin: auto;
 }
 
 .subtitle-bg {
@@ -508,6 +515,55 @@ body::after {
     margin-top: 6px;
 }
 
+.section-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 4px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    color: var(--text-dim);
+    transition: color 0.2s;
+}
+
+.section-toggle:hover {
+    color: var(--text);
+}
+
+.section-toggle .section-label {
+    margin-bottom: 0;
+}
+
+.section-chevron {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-light);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.section-toggle.open .section-chevron {
+    transform: rotate(180deg);
+}
+
+.collapsible-content {
+    display: none;
+    padding-top: 8px;
+}
+
+.collapsible-content.open {
+    display: block;
+    animation: fadeIn 0.25s ease both;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 .field-label-row {
     display: flex;
     align-items: center;
@@ -787,17 +843,27 @@ export default function landingTemplate(manifest: Manifest): string {
     if ((manifest.config || []).length) {
         let options = '';
         let lastSection = '';
+        let sectionIdx = 0;
+        let collapsibleOpen = false;
         const normalizeOptions = (opts: any): Array<{ value: string; label: string }> =>
             (opts || []).map((o: any) => (typeof o === 'string' ? { value: o, label: o } : o));
         manifest.config?.forEach(elem => {
             const key = elem.key;
 
-            // Section heading (rendered once when the section changes).
+            // A `section` starts a collapsible group (collapsed by default). Fields
+            // after it with no section of their own stay inside the same group.
             if (elem.section && elem.section !== lastSection) {
                 lastSection = elem.section;
+                if (collapsibleOpen) options += `</div>`;
+                const sectionId = `section-${sectionIdx++}`;
                 options += `
                 <div class="divider"></div>
-                <div class="section-label">${elem.section}</div>`;
+                <button type="button" class="section-toggle" data-target="${sectionId}">
+                    <span class="section-label">${elem.section}</span>
+                    <span class="section-chevron"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                </button>
+                <div class="collapsible-content" id="${sectionId}">`;
+                collapsibleOpen = true;
             }
 
             const helpHTML = elem.description
@@ -874,6 +940,7 @@ export default function landingTemplate(manifest: Manifest): string {
                 </div>`;
             }
         });
+        if (collapsibleOpen) options += `</div>`;
         if (options.length) {
             formHTML = `
             <div class="section-label">Configuration</div>
@@ -885,6 +952,15 @@ export default function landingTemplate(manifest: Manifest): string {
             </div>
             <div class="divider"></div>`;
             script += `
+            document.querySelectorAll('.section-toggle').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const target = document.getElementById(btn.dataset.target);
+                    if (!target) return;
+                    const isOpen = target.classList.toggle('open');
+                    btn.classList.toggle('open', isOpen);
+                });
+            });
+
             document.querySelectorAll('.custom-select-wrapper').forEach(wrapper => {
                 const trigger = wrapper.querySelector('.custom-select-trigger');
                 const optionsContainer = wrapper.querySelector('.custom-select-options');
