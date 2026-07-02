@@ -1,4 +1,5 @@
 import { normalizeLanguageCode } from './encoding';
+import { cloudscraperFetch, describeCloudflareBlock } from './cloudscraper';
 
 // ---------------------------------------------------------------------------
 // Optional, API-key-gated subtitle providers (SubDL, Wyzie, SubSource).
@@ -13,17 +14,9 @@ import { normalizeLanguageCode } from './encoding';
 const PROVIDER_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_PROVIDER = 20;
 
-// Several provider hosts (SubDL, dl.subdl.com) sit behind Cloudflare, whose WAF
-// 403s requests that don't look like a real browser. A bot-ish User-Agent is
-// enough to get blocked, so we present a normal Chrome UA + browser headers.
-export const PROVIDER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-
-// Extra headers a browser sends that help clear Cloudflare's bot checks.
-export const BROWSER_LIKE_HEADERS: Record<string, string> = {
-    'User-Agent': PROVIDER_USER_AGENT,
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9'
-};
+// Provider hosts (SubDL, dl.subdl.com) sit behind Cloudflare, whose WAF 403s
+// requests that don't look like a real browser. All provider HTTP traffic goes
+// through cloudscraperFetch(), which supplies a rotating browser header profile.
 
 // A resolved language the caller wants, in the three forms the providers need.
 export interface RequestedLang {
@@ -163,12 +156,21 @@ export async function resolveRequestedLangs(
 }
 
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<any> {
-    const res = await fetch(url, {
-        headers: { ...BROWSER_LIKE_HEADERS, ...headers },
+    // cloudscraperFetch supplies the rotating browser header profile; we only add
+    // caller-specific headers (e.g. SubSource's X-API-Key).
+    const res = await cloudscraperFetch(url, {
+        headers,
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS)
     });
     if (!res.ok) {
-        throw new Error(`${url} responded with ${res.status}`);
+        // Surface *what kind* of block this is so we know if it's bypassable.
+        let detail = '';
+        try {
+            const body = await res.text();
+            const kind = describeCloudflareBlock(res.status, body);
+            if (kind) detail = ` [Cloudflare: ${kind}]`;
+        } catch { /* ignore body read errors */ }
+        throw new Error(`${url} responded with ${res.status}${detail}`);
     }
     return await res.json();
 }
