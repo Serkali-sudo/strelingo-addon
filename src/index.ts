@@ -16,6 +16,7 @@ import { decodeSubtitleBuffer, getLanguageAliases } from './encoding';
 import { resolveKitsuToImdb } from './kitsuMapping';
 import {
     OPTIONAL_PROVIDERS,
+    PROVIDER_USER_AGENT,
     WYZIE_SOURCES,
     fetchOptionalProviderSubtitles,
     hasAnyOptionalProvider,
@@ -449,7 +450,7 @@ async function fetchSubtitleFilename(url: string): Promise<string | null> {
     if (!isSafeSubtitleUrl(url)) return null;
 
     try {
-        const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+        const response = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': PROVIDER_USER_AGENT }, signal: AbortSignal.timeout(5000) });
         const disposition = response.headers.get('content-disposition');
         if (!disposition) return null;
         const match = disposition.match(/filename="?([^";]+)"?/i);
@@ -724,7 +725,7 @@ async function fetchSubtitleContent(
     console.log(`Fetching subtitle content from: ${url}`);
     try {
         const response = await fetch(url, {
-            headers: options.headers,
+            headers: { 'User-Agent': PROVIDER_USER_AGENT, ...options.headers },
             signal: AbortSignal.timeout(15000)
         });
         if (!response.ok) throw new Error(`Fetched subtitle responded with ${response.status}`);

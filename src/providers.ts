@@ -13,6 +13,10 @@ import { normalizeLanguageCode } from './encoding';
 const PROVIDER_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_PROVIDER = 20;
 
+// Several provider hosts (SubDL, dl.subdl.com) sit behind Cloudflare and 403
+// requests that arrive without a browser-like User-Agent.
+export const PROVIDER_USER_AGENT = 'Mozilla/5.0 (compatible; StrelingoAddon/1.0; +https://github.com/Serkali-sudo/strelingo-addon)';
+
 // A resolved language the caller wants, in the three forms the providers need.
 export interface RequestedLang {
     code3: string;   // addon-internal 3-letter code, e.g. 'eng', 'pob'
@@ -152,7 +156,7 @@ export async function resolveRequestedLangs(
 
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<any> {
     const res = await fetch(url, {
-        headers,
+        headers: { 'User-Agent': PROVIDER_USER_AGENT, 'Accept': 'application/json', ...headers },
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS)
     });
     if (!res.ok) {
@@ -221,21 +225,17 @@ async function fetchWyzie(params: ProviderSearchParams, cfg: OptionalProviderCon
 }
 
 // ---------------------------------------------------------------------------
-// SubDL  (https://api.subdl.com) — Bearer auth; download links accept the legacy
-// ?api_key= query, and format=file yields a single non-zip file. Season packs
-// may still come back as a zip, which fetchSubtitleContent() auto-unzips.
+// SubDL  (https://api.subdl.com/api/v1) — the public API: key goes in the
+// `api_key` query param. A subtitle's top-level `url` is a zip
+// ("/subtitle/xxx-yyy.zip"); with unpack=1, packed/full-season subtitles also
+// expose `unpack_files[]` with direct raw single-file URLs
+// ("/subtitle/{n_id}/{file_n_id}") plus per-file language/season/episode/format —
+// which we prefer so we can hand back the exact episode without unzipping.
 // ---------------------------------------------------------------------------
-function subdlDownloadUrl(item: any, apiKey: string): string | null {
-    const direct = item.url || item.download_url || item.downloadUrl;
-    const nId = item.nId ?? item.n_id ?? item.id;
-
-    if (nId) {
-        return `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(String(nId))}/download?format=file&api_key=${encodeURIComponent(apiKey)}`;
-    }
-    if (typeof direct === 'string' && direct) {
-        if (/^https?:\/\//i.test(direct)) return direct;
-        // Legacy relative zip path (e.g. "/subtitle/12345.zip").
-        return `https://dl.subdl.com${direct.startsWith('/') ? '' : '/'}${direct}`;
+function subdlDownloadUrl(rawUrl: unknown): string | null {
+    if (typeof rawUrl === 'string' && rawUrl) {
+        if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+        return `https://dl.subdl.com${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
     }
     return null;
 }
@@ -244,45 +244,85 @@ async function fetchSubdl(params: ProviderSearchParams, cfg: OptionalProviderCon
     if (!cfg.subdlKey) return [];
 
     const qs = new URLSearchParams();
+    qs.set('api_key', cfg.subdlKey);
     qs.set('imdb_id', params.imdbId);
-    qs.set('languages', params.langs.map(l => l.code2).join(','));
-    qs.set('unpack', '1');
+    // SubDL v1 expects upper-case 2-letter codes, e.g. EN,TR.
+    qs.set('languages', params.langs.map(l => l.code2.toUpperCase()).join(','));
     qs.set('subs_per_page', '30');
+    qs.set('unpack', '1');
     if (params.type === 'series' && params.season) {
-        qs.set('season', params.season);
-        if (params.episode) qs.set('episode', params.episode);
+        qs.set('type', 'tv');
+        qs.set('season_number', params.season);
+        if (params.episode) qs.set('episode_number', params.episode);
+    } else {
+        qs.set('type', 'movie');
     }
 
-    const data = await fetchJson(
-        `https://api.subdl.com/api/v2/subtitles/search?${qs.toString()}`,
-        { Authorization: `Bearer ${cfg.subdlKey}` }
-    );
-    const items: any[] = Array.isArray(data?.subtitles) ? data.subtitles
-        : Array.isArray(data?.results) ? data.results
-        : Array.isArray(data) ? data : [];
+    const data = await fetchJson(`https://api.subdl.com/api/v1/subtitles?${qs.toString()}`);
+    if (data && data.status === false) {
+        throw new Error(`SubDL error: ${data.error || 'request rejected'}`);
+    }
+    const items: any[] = Array.isArray(data?.subtitles) ? data.subtitles : [];
+
+    const wantSeason = params.season ? parseInt(params.season, 10) : null;
+    const wantEpisode = params.episode ? parseInt(params.episode, 10) : null;
+    // v1 returns `language` as an upper-case code (e.g. "EN") and `lang` as the
+    // full name (e.g. "english"); match against whichever a record carries.
+    const matchLang = (code: unknown, name?: unknown): RequestedLang | undefined => {
+        const up = String(code || '').toUpperCase();
+        const low = String(name || '').toLowerCase();
+        return params.langs.find(l =>
+            (up && l.code2.toUpperCase() === up) || (low && (l.name === low || l.code3 === low)));
+    };
 
     const out: ProviderSub[] = [];
     for (const item of items) {
-        const url = subdlDownloadUrl(item, cfg.subdlKey);
-        if (!url) continue;
+        const files: any[] | null = Array.isArray(item.unpack_files) ? item.unpack_files : null;
 
-        const rawLang = String(item.language || item.lang || '').toLowerCase();
-        const match = params.langs.find(l => l.code2 === rawLang || l.code3 === rawLang || l.name === rawLang);
-        if (!match) continue;
-
-        const release = item.release_name || item.releaseName || item.name || 'SubDL';
-        const format = String(item.format || extOf(item.name) || 'srt').toLowerCase();
-        out.push({
-            id: `subdl-${item.nId ?? item.n_id ?? item.id ?? out.length}`,
-            url,
-            lang: match.code3,
-            g: Number(item.downloads) || Number(item.rating) || 0,
-            format,
-            releaseName: `SubDL: ${release}`,
-            provider: 'subdl',
-            season: params.season,
-            episode: params.episode
-        });
+        if (files && files.length) {
+            // Packed/full-season subtitle: use the pre-extracted single files.
+            for (const f of files) {
+                const match = matchLang(f.language, f.lang);
+                if (!match) continue;
+                // For a specific episode, keep only that episode's file.
+                if (params.type === 'series' && wantEpisode != null) {
+                    if (Number(f.episode) !== wantEpisode) continue;
+                    if (wantSeason != null && f.season != null && Number(f.season) !== wantSeason) continue;
+                }
+                const url = subdlDownloadUrl(f.url);
+                if (!url) continue;
+                out.push({
+                    id: `subdl-${f.file_n_id ?? out.length}`,
+                    url,
+                    lang: match.code3,
+                    g: 0,
+                    format: String(f.format || 'srt').toLowerCase(),
+                    releaseName: `SubDL: ${f.release_name || f.name || item.release_name || 'pack'}`,
+                    provider: 'subdl'
+                    // Direct raw file — no zip/episode hint needed.
+                });
+                if (out.length >= MAX_RESULTS_PER_PROVIDER) break;
+            }
+        } else {
+            // Single subtitle: the top-level url is a zip. fetchSubtitleContent()
+            // auto-unzips it, using the episode hint to pick the file for packs.
+            const match = matchLang(item.language, item.lang);
+            if (!match) continue;
+            const url = subdlDownloadUrl(item.url);
+            if (!url) continue;
+            out.push({
+                id: `subdl-${item.url || out.length}`,
+                url,
+                lang: match.code3,
+                g: Number(item.downloads) || 0,
+                format: 'srt',
+                releaseName: `SubDL: ${item.release_name || item.name || 'SubDL'}`,
+                provider: 'subdl',
+                season: params.season,
+                episode: params.episode
+            });
+        }
+        if (out.length >= MAX_RESULTS_PER_PROVIDER) break;
     }
     return out.slice(0, MAX_RESULTS_PER_PROVIDER);
 }
