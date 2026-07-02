@@ -27,7 +27,6 @@ import {
 import { cloudscraperFetch } from './cloudscraper';
 import {
     mergeSubtitlesByTime,
-    rankSubtitleCandidates,
     type SubtitleCandidate,
     type SubtitleCue
 } from './subtitleMatching';
@@ -444,40 +443,6 @@ function putCachedResponse(cacheKey: Request | null, response: Response, executi
     } catch (e: any) {
         console.warn("Cache write error:", e.message);
     }
-}
-
-async function fetchSubtitleFilename(url: string): Promise<string | null> {
-    if (!isSafeSubtitleUrl(url)) return null;
-
-    try {
-        const response = await cloudscraperFetch(url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
-        const disposition = response.headers.get('content-disposition');
-        if (!disposition) return null;
-        const match = disposition.match(/filename="?([^";]+)"?/i);
-        return match ? match[1] : null;
-    } catch {
-        return null;
-    }
-}
-
-async function rankSubtitleInfoList(subList: SubtitleInfo[], videoFilename?: string): Promise<SubtitleInfo[]> {
-    const ranked = await rankSubtitleCandidates(subList, {
-        videoFilename,
-        fetchSubtitleFilename
-    });
-
-    for (const candidate of ranked.slice(0, 5)) {
-        const details = [
-            `score=${candidate.score}`,
-            `filenameScore=${candidate.filenameScore}`,
-            `weakPenalty=${candidate.weakVariantPenalty}`,
-            `g=${candidate.providerScore}`
-        ].join(' ');
-        const filename = candidate.filename ? ` filename=${candidate.filename}` : '';
-        console.log(`Ranked subtitle ID=${candidate.sub.id} ${details}${filename}`);
-    }
-
-    return ranked.map(candidate => candidate.sub);
 }
 
 interface ResolvedVideoId {
@@ -1754,12 +1719,10 @@ async function handleSubtitlesRequest(c: any) {
             return res;
         }
 
-        console.log(`Ranking main subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
-        mainSubInfoList = await rankSubtitleInfoList(mainSubInfoList, videoParams.filename);
-
-        console.log(`Ranking translation subtitles${videoParams.filename ? ` by sync with: ${videoParams.filename}` : ''}`);
-        transSubInfoList = await rankSubtitleInfoList(transSubInfoList, videoParams.filename);
-
+        // No re-ranking: use each source's own order as returned (OpenSubtitles
+        // first in its order, then any optional-provider results). The sources
+        // already order results sensibly, and re-ranking is skipped to avoid extra
+        // work / Cloudflare Workers subrequests.
 
         const directServingEnabled = getEnvVar(c, 'ENABLE_DIRECT_SERVING') === 'true';
         const storageLazyRequested = getEnvVar(c, 'ENABLE_STORAGE_LAZY_SERVING') === 'true';
