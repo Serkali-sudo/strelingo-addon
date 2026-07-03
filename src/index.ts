@@ -591,9 +591,12 @@ async function fetchAllSubtitles(
 
         // Legacy fallback: fill in any requested language the primary source missed.
         let legacyCount = 0;
+        let legacyAttempted = false;
         if (baseSearchParams.imdbid) {
             const missing = getMissingSubtitleLanguageIds(allSubtitles, fallbackLanguageIds);
             if (missing.length > 0) {
+                legacyAttempted = true;
+                console.log(`[legacy] filling missing language(s): ${missing.join(', ')}`);
                 const legacy = await fetchLegacyOpenSubtitlesFallback(baseSearchParams, type, missing);
                 legacyCount = legacy.length;
                 if (legacy.length > 0) allSubtitles = allSubtitles.concat(legacy);
@@ -602,7 +605,7 @@ async function fetchAllSubtitles(
 
         const parts = [`OpenSubtitles: ${osCount}`];
         if (needsJapanese) parts.push(`Buta-no-subs: ${butaCount}`);
-        if (legacyCount > 0) parts.push(`OpenSubtitles-legacy: ${legacyCount}`);
+        if (legacyAttempted) parts.push(`OpenSubtitles-legacy: ${legacyCount}`);
         console.log(`[sources] ${parts.join(', ')}`);
 
         return allSubtitles.length > 0 ? allSubtitles : null;
@@ -660,20 +663,25 @@ async function fetchLegacyOpenSubtitlesFallback(
             });
 
             if (!response.ok) {
-                console.warn(`[legacy] ${languageId}: responded with ${response.status}`);
+                console.warn(`[legacy] ${languageId}: HTTP ${response.status}`);
                 return [];
             }
 
             const payload = await response.json() as unknown;
-            if (!Array.isArray(payload)) return [];
+            if (!Array.isArray(payload)) {
+                console.warn(`[legacy] ${languageId}: non-array response`);
+                return [];
+            }
 
-            return payload
+            const mapped = payload
                 .filter(isLegacyOpenSubtitlesSubtitle)
                 .filter(subtitle => {
                     const format = subtitle.SubFormat?.toLowerCase();
                     return Boolean(subtitle.SubDownloadLink && format && SUPPORTED_SUBTITLE_FORMATS.has(format));
                 })
                 .map(subtitle => mapLegacyOpenSubtitlesSubtitle(subtitle, languageId));
+            console.log(`[legacy] ${languageId}: ${payload.length} raw, ${mapped.length} usable`);
+            return mapped;
         } catch (error: any) {
             console.warn(`[legacy] ${languageId} failed: ${error.message}`);
             return [];
