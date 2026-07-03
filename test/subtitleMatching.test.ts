@@ -261,42 +261,6 @@ const toSrtTime = (ms) => {
     assert.equal(sanitizeSubtitleText('- [groans]\n- What?'), '- What?');
     assert.equal(sanitizeSubtitleText('[thunder]\n-'), '');
     assert.equal(sanitizeSubtitleText('# happy birthday to you #\nBlow the candles.'), 'Blow the candles.');
-    // Lyrics wrapped across two lines are still detected.
-    assert.equal(sanitizeSubtitleText('# Some other folks might be smarter\nthan I am #\nHello'), 'Hello');
-}
-
-// A cue that is entirely lyrics stays in the output (plain, with its markers)
-// but is never matched against a translation.
-{
-    const merged = mergeSubtitlesByTime(
-        [
-            cue('1', '00:00:10,000', '00:00:13,000', '# la la la #'),
-            cue('2', '00:00:13,500', '00:00:15,500', 'Hello')
-        ],
-        [cue('1', '00:00:13,400', '00:00:15,400', 'Merhaba')]
-    );
-
-    assert.equal(merged.length, 2);
-    assert.equal(merged[0].text, '# la la la #');
-    assert.equal(merged[1].text, '<b>Hello</b>\n<i>> Merhaba</i>');
-}
-
-// The same translation cue is repeated on at most two consecutive entries.
-{
-    const longLine = 'This main subtitle line is quite long and will not merge with the others';
-    const merged = mergeSubtitlesByTime(
-        [
-            cue('1', '00:00:10,000', '00:00:12,000', `${longLine} one`),
-            cue('2', '00:00:12,100', '00:00:14,000', `${longLine} two`),
-            cue('3', '00:00:14,100', '00:00:16,000', `${longLine} three`)
-        ],
-        [cue('1', '00:00:10,000', '00:00:16,000', 'Tek uzun çeviri')]
-    );
-
-    assert.equal(merged.length, 3);
-    assert.ok(merged[0].text.includes('Tek uzun çeviri'));
-    assert.ok(merged[1].text.includes('Tek uzun çeviri'));
-    assert.equal(merged[2].text, `${longLine} three`);
 }
 
 console.log('subtitleMatching tests passed');

@@ -23,7 +23,6 @@ interface TimedCue<T extends SubtitleCue> {
     midMs: number;
     durationMs: number;
     text: string;
-    isMusic: boolean;
 }
 
 interface MatchCandidate<T extends SubtitleCue> {
@@ -139,21 +138,14 @@ const ANCHOR_NEIGHBOR_AGREEMENT_MS = 1500;
 // drift and interpolated; larger jumps are step changes (edited-out breaks)
 // and switch at the midpoint instead of smearing across the whole span.
 const DRIFT_RAMP_MAX_MS = 5000;
-// The aligner only fires when sync is broken globally (a constant shift or
-// fps drift, where the raw timeline is bad everywhere and correction wins by
-// a wide margin). Pairs that are only partially in sync — e.g. a translation
-// timed for a different cut, wrong in some scenes only — are left untouched:
-// local estimates there are unreliable, and a wrong warp breaks the regions
-// that were already good. Total overlap must improve by this factor...
-const ALIGNMENT_OVERLAP_IMPROVEMENT = 1.25;
-// ...and no block of consecutive cues may end up meaningfully worse than the
-// raw timeline was in that block.
+// An estimated alignment is only applied when it beats the raw timeline:
+// strictly more matched main cues, or the same count with more total overlap.
+const ALIGNMENT_OVERLAP_IMPROVEMENT = 1.01;
+// Match quality is also compared block by block: an alignment that wrecks one
+// region of the file to help another (a wrong local anchor) is rejected.
 const ALIGNMENT_BLOCK_CUES = 32;
-const MAX_BLOCK_OVERLAP_LOSS_RATIO = 0.9;
-const BLOCK_OVERLAP_ALLOWANCE_MS = 750;
-// The same single translation cue is shown on at most this many consecutive
-// entries; after that the main text is shown alone instead of repeating it.
-const MAX_TRANSLATION_REPEATS = 2;
+const MAX_BLOCK_LOSS_RATIO = 0.25;
+const MIN_BLOCK_LOSS_ALLOWANCE = 2;
 // A translation cue owned by a neighbouring main cue is repeated here only
 // when it also covers at least this fraction of this main cue.
 const SPANNING_COVERAGE_RATIO = 0.5;
@@ -167,10 +159,13 @@ const MERGED_MAIN_MAX_DURATION_MS = 8000;
 const STANDALONE_SDH_LINE_PATTERN = /^\s*(?:-\s*)?[\[(][^\])]+[\])]\s*$/;
 const ANNOTATION_PATTERN = /[\[(][^\])]*[\])]/g;
 const SPEAKER_LABEL_PATTERN = /^\s*(?:-\s*)?(?:[A-Z][A-Z0-9'._-]*)(?:\s+[A-Z][A-Z0-9'._-]*){0,4}\s*:\s*/;
+const MUSIC_NOTE_LINE_PATTERN = /^\s*(?:-\s*)?[♪♫♬]/;
+const HASH_MUSIC_LINE_PATTERN = /^\s*(?:-\s*)?#.*#\s*$/;
 const MUSIC_NOTE_CHARS_PATTERN = /[♪♫♬]/g;
 const PUNCTUATION_ONLY_LINE_PATTERN = /^[\s\-–—.,;:!?'"“”‘’#~*]*$/;
 
-function decodeAndStripMarkup(text: string): string {
+export function sanitizeSubtitleText(text: string): string {
+    if (!text) return '';
     return text
         .replace(/<[^>]+>/g, '')
         .replace(/\{[^}]*\}/g, '')
@@ -179,27 +174,11 @@ function decodeAndStripMarkup(text: string): string {
         .replace(/&#39;/gi, "'")
         .replace(/&lt;/gi, '<')
         .replace(/&gt;/gi, '>')
-        .replace(/&amp;/gi, '&');
-}
-
-// Lyric lines start or end with a music note, or use the SDH "#" music
-// marker. Checking both ends catches lyrics wrapped across two lines
-// ("# Some other folks" / "than I am #").
-function isMusicLine(line: string): boolean {
-    const trimmed = line.trim();
-    if (!trimmed) return false;
-    return /^(?:-\s*)?[♪♫♬]/.test(trimmed)
-        || /[♪♫♬]\s*$/.test(trimmed)
-        || /^(?:-\s*)?#(?!\d)/.test(trimmed)
-        || /#$/.test(trimmed);
-}
-
-function sanitizeStrippedLines(stripped: string): string {
-    return stripped
+        .replace(/&amp;/gi, '&')
         .split(/\r?\n|\r/g)
         .map(line => {
             if (STANDALONE_SDH_LINE_PATTERN.test(line)) return '';
-            if (isMusicLine(line)) return '';
+            if (MUSIC_NOTE_LINE_PATTERN.test(line) || HASH_MUSIC_LINE_PATTERN.test(line)) return '';
             return line
                 .replace(SPEAKER_LABEL_PATTERN, '')
                 .replace(ANNOTATION_PATTERN, ' ')
@@ -211,24 +190,6 @@ function sanitizeStrippedLines(stripped: string): string {
         .replace(/\s+/g, ' ')
         .replace(/\s+([.,!?;:])/g, '$1')
         .trim();
-}
-
-export function sanitizeSubtitleText(text: string): string {
-    if (!text) return '';
-    return sanitizeStrippedLines(decodeAndStripMarkup(text));
-}
-
-// A cue made up entirely of lyrics is kept for display (with its markers) but
-// flagged so matching can skip it — translations usually omit songs, and
-// letting lyric cues grab neighbouring dialogue pollutes the output.
-function analyzeCueText(raw: string): { text: string; isMusic: boolean } {
-    if (!raw) return { text: '', isMusic: false };
-    const stripped = decodeAndStripMarkup(raw);
-    const lines = stripped.split(/\r?\n|\r/g).map(line => line.trim()).filter(Boolean);
-    if (lines.length > 0 && lines.every(isMusicLine)) {
-        return { text: lines.join(' ').replace(/\s+/g, ' ').trim(), isMusic: true };
-    }
-    return { text: sanitizeStrippedLines(stripped), isMusic: false };
 }
 
 export function parseSrtTimeToMs(timeString: string): number | null {
@@ -248,10 +209,8 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
     transSubs: T[],
     mergeThresholdMs = 500
 ): T[] {
-    // Music/lyric cues in the main track are kept for display but never
-    // matched; lyric cues in the translation track are dropped outright.
-    const mainTimed = buildTimedCues(mainSubs, true);
-    const rawTransTimed = buildTimedCues(transSubs, false);
+    const mainTimed = buildTimedCues(mainSubs);
+    const rawTransTimed = buildTimedCues(transSubs);
 
     // Estimate the trans->main time alignment, but only use it when it
     // demonstrably matches more cues than the untouched timeline — a wrong
@@ -289,10 +248,6 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
             transCursor++;
         }
         windowStart[mi] = transCursor;
-        if (mainCue.isMusic) {
-            windowEnd[mi] = transCursor;
-            continue;
-        }
 
         let i = transCursor;
         for (; i < transTimed.length; i++) {
@@ -355,9 +310,6 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
     // single translation cue (one translation spanning a split main line),
     // combine them into one entry instead of repeating the translation —
     // as long as the joined line stays short and the cues sit close together.
-    let lastTranslationCue: TimedCue<T> | null = null;
-    let translationRepeats = 0;
-
     for (let mi = 0; mi < mainTimed.length;) {
         const picked = pickedTranslations[mi];
         let last = mi;
@@ -378,23 +330,12 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
             }
         }
 
-        // Cap how many consecutive entries may repeat the same translation
-        // cue (a long translation spanning several long main lines).
-        const singleCue = picked.length === 1 ? picked[0] : null;
-        if (singleCue !== null && singleCue === lastTranslationCue) {
-            translationRepeats++;
-        } else {
-            translationRepeats = singleCue !== null ? 1 : 0;
-        }
-        lastTranslationCue = singleCue;
-        const suppressRepeat = singleCue !== null && translationRepeats > MAX_TRANSLATION_REPEATS;
-
         const mainText = last === mi
             ? mainTimed[mi].text
             : mainTimed.slice(mi, last + 1).map(cue => cue.text).join(' ');
 
         let mergedText = mainText;
-        if (picked.length > 0 && !suppressRepeat) {
+        if (picked.length > 0) {
             const parts: string[] = [];
             for (const translation of picked) {
                 if (translation.text && (parts.length === 0 || parts[parts.length - 1] !== translation.text)) {
@@ -465,7 +406,6 @@ function estimateSegmentOffset<T extends SubtitleCue>(
 
     for (let i = 0; i < sampleCount; i++) {
         const mainCue = mainTimed[from + Math.floor(i * segmentLength / sampleCount)];
-        if (mainCue.isMusic) continue;
         const firstIndex = lowerBound(transStarts, mainCue.startMs + centerOffsetMs - searchWindowMs);
         const deltas: number[] = [];
 
@@ -618,13 +558,12 @@ function mapTransToMainTime(transMs: number, anchors: AlignmentAnchor[]): number
 interface AlignmentScore {
     matchedMains: number;
     overlapTotalMs: number;
-    blockOverlapMs: number[];
+    blockMatched: number[];
 }
 
-// How well a translation timeline fits the main one: the summed best overlap
-// per main cue (in total and per block of consecutive main cues), plus the
-// number of mains with a material match. Music cues are excluded — they have
-// no translation counterpart.
+// How well a translation timeline fits the main one: the number of main cues
+// with at least one material overlap (in total and per block of consecutive
+// main cues), plus the summed best overlap per cue.
 function scoreAlignment<T extends SubtitleCue>(
     mainTimed: Array<TimedCue<T>>,
     transTimed: Array<TimedCue<T>>,
@@ -632,7 +571,7 @@ function scoreAlignment<T extends SubtitleCue>(
 ): AlignmentScore {
     let matchedMains = 0;
     let overlapTotalMs = 0;
-    const blockOverlapMs: number[] = new Array(Math.ceil(mainTimed.length / ALIGNMENT_BLOCK_CUES) || 1).fill(0);
+    const blockMatched: number[] = new Array(Math.ceil(mainTimed.length / ALIGNMENT_BLOCK_CUES) || 1).fill(0);
     let cursor = 0;
 
     for (let mi = 0; mi < mainTimed.length; mi++) {
@@ -640,7 +579,6 @@ function scoreAlignment<T extends SubtitleCue>(
         while (cursor < transTimed.length && transTimed[cursor].endMs < mainCue.startMs - mergeThresholdMs) {
             cursor++;
         }
-        if (mainCue.isMusic) continue;
 
         let bestOverlapMs = 0;
         let hasMaterial = false;
@@ -652,25 +590,27 @@ function scoreAlignment<T extends SubtitleCue>(
             if (!hasMaterial && isMaterialOverlap(mainCue, transCue, overlapMs)) hasMaterial = true;
         }
 
-        if (hasMaterial) matchedMains++;
+        if (hasMaterial) {
+            matchedMains++;
+            blockMatched[Math.floor(mi / ALIGNMENT_BLOCK_CUES)]++;
+        }
         overlapTotalMs += bestOverlapMs;
-        blockOverlapMs[Math.floor(mi / ALIGNMENT_BLOCK_CUES)] += bestOverlapMs;
     }
 
-    return { matchedMains, overlapTotalMs, blockOverlapMs };
+    return { matchedMains, overlapTotalMs, blockMatched };
 }
 
 function isBetterAlignment(aligned: AlignmentScore, raw: AlignmentScore): boolean {
     // Reject any alignment that noticeably degrades one region of the file,
     // even if it helps elsewhere — that is the signature of a wrong anchor.
-    for (let b = 0; b < raw.blockOverlapMs.length; b++) {
-        const rawBlock = raw.blockOverlapMs[b];
-        const alignedBlock = aligned.blockOverlapMs[b] || 0;
-        if (alignedBlock < rawBlock * MAX_BLOCK_OVERLAP_LOSS_RATIO - BLOCK_OVERLAP_ALLOWANCE_MS) return false;
+    for (let b = 0; b < raw.blockMatched.length; b++) {
+        const rawBlock = raw.blockMatched[b];
+        const alignedBlock = aligned.blockMatched[b] || 0;
+        const allowedLoss = Math.max(MIN_BLOCK_LOSS_ALLOWANCE, Math.floor(rawBlock * MAX_BLOCK_LOSS_RATIO));
+        if (alignedBlock < rawBlock - allowedLoss) return false;
     }
-    if (aligned.overlapTotalMs > raw.overlapTotalMs * ALIGNMENT_OVERLAP_IMPROVEMENT) return true;
-    return aligned.matchedMains > raw.matchedMains * 1.1
-        && aligned.overlapTotalMs > raw.overlapTotalMs;
+    if (aligned.matchedMains !== raw.matchedMains) return aligned.matchedMains > raw.matchedMains;
+    return aligned.overlapTotalMs > raw.overlapTotalMs * ALIGNMENT_OVERLAP_IMPROVEMENT;
 }
 
 export async function rankSubtitleCandidates<T extends SubtitleCandidate>(
@@ -746,7 +686,7 @@ export function scoreFilenameMatch(candidateTokens: string[], videoTokens: strin
     return score;
 }
 
-function buildTimedCues<T extends SubtitleCue>(subs: T[], keepMusicCues: boolean): Array<TimedCue<T>> {
+function buildTimedCues<T extends SubtitleCue>(subs: T[]): Array<TimedCue<T>> {
     const timed: Array<TimedCue<T>> = [];
 
     for (const cue of subs) {
@@ -756,9 +696,8 @@ function buildTimedCues<T extends SubtitleCue>(subs: T[], keepMusicCues: boolean
         const endMs = parseSrtTimeToMs(cue.endTime);
         if (startMs === null || endMs === null || endMs <= startMs) continue;
 
-        const { text, isMusic } = analyzeCueText(cue.text);
+        const text = sanitizeSubtitleText(cue.text);
         if (!text) continue;
-        if (isMusic && !keepMusicCues) continue;
 
         const durationMs = endMs - startMs;
         timed.push({
@@ -767,8 +706,7 @@ function buildTimedCues<T extends SubtitleCue>(subs: T[], keepMusicCues: boolean
             endMs,
             midMs: startMs + durationMs / 2,
             durationMs,
-            text,
-            isMusic
+            text
         });
     }
 
