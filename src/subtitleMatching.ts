@@ -134,6 +134,18 @@ const CONSTANT_OFFSET_TOLERANCE_MS = 400;
 // A segment offset this far from two agreeing neighbours is discarded as noise.
 const ANCHOR_SPIKE_MS = 4000;
 const ANCHOR_NEIGHBOR_AGREEMENT_MS = 1500;
+// Offset changes between adjacent anchors up to this are treated as gradual
+// drift and interpolated; larger jumps are step changes (edited-out breaks)
+// and switch at the midpoint instead of smearing across the whole span.
+const DRIFT_RAMP_MAX_MS = 5000;
+// An estimated alignment is only applied when it beats the raw timeline:
+// strictly more matched main cues, or the same count with more total overlap.
+const ALIGNMENT_OVERLAP_IMPROVEMENT = 1.01;
+// Match quality is also compared block by block: an alignment that wrecks one
+// region of the file to help another (a wrong local anchor) is rejected.
+const ALIGNMENT_BLOCK_CUES = 32;
+const MAX_BLOCK_LOSS_RATIO = 0.25;
+const MIN_BLOCK_LOSS_ALLOWANCE = 2;
 // A translation cue owned by a neighbouring main cue is repeated here only
 // when it also covers at least this fraction of this main cue.
 const SPANNING_COVERAGE_RATIO = 0.5;
@@ -193,8 +205,21 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
 ): T[] {
     const mainTimed = buildTimedCues(mainSubs);
     const rawTransTimed = buildTimedCues(transSubs);
+
+    // Estimate the trans->main time alignment, but only use it when it
+    // demonstrably matches more cues than the untouched timeline — a wrong
+    // estimate must never make an already-synced pair worse.
+    let transTimed = rawTransTimed;
     const anchors = estimateAlignmentAnchors(mainTimed, rawTransTimed);
-    const transTimed = alignTransCues(rawTransTimed, anchors);
+    if (anchors.length > 0) {
+        const aligned = alignTransCues(rawTransTimed, anchors);
+        if (aligned !== rawTransTimed && isBetterAlignment(
+            scoreAlignment(mainTimed, aligned, mergeThresholdMs),
+            scoreAlignment(mainTimed, rawTransTimed, mergeThresholdMs)
+        )) {
+            transTimed = aligned;
+        }
+    }
 
     const mergedSubs: T[] = [];
     if (mainTimed.length === 0) return mergedSubs;
@@ -450,9 +475,9 @@ function alignTransCues<T extends SubtitleCue>(
         return shiftTimedCues(transTimed, -constantOffset);
     }
 
-    // Piecewise-linear warp between anchors (extrapolated at the edges). This
-    // covers both fps drift (anchors along a line) and step offsets.
-    return transTimed.map(cue => {
+    // Piecewise warp between anchors (extrapolated at the edges). This covers
+    // both fps drift (anchors along a line) and step offsets.
+    const warped = transTimed.map(cue => {
         const startMs = mapTransToMainTime(cue.startMs, anchors);
         let endMs = mapTransToMainTime(cue.endMs, anchors);
         if (endMs <= startMs) endMs = startMs + cue.durationMs;
@@ -464,6 +489,9 @@ function alignTransCues<T extends SubtitleCue>(
             durationMs: endMs - startMs
         };
     });
+    // A step change can locally reorder cues; matching assumes start order.
+    warped.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+    return warped;
 }
 
 function mapTransToMainTime(transMs: number, anchors: AlignmentAnchor[]): number {
@@ -482,8 +510,69 @@ function mapTransToMainTime(transMs: number, anchors: AlignmentAnchor[]): number
     const a = anchors[k];
     const b = anchors[k + 1];
     const fraction = (transMs - a.transMs) / (b.transMs - a.transMs);
-    const offsetMs = a.offsetMs + fraction * (b.offsetMs - a.offsetMs);
+    const diffMs = b.offsetMs - a.offsetMs;
+    const offsetMs = Math.abs(diffMs) <= DRIFT_RAMP_MAX_MS
+        ? a.offsetMs + fraction * diffMs
+        : (fraction < 0.5 ? a.offsetMs : b.offsetMs);
     return transMs - offsetMs;
+}
+
+interface AlignmentScore {
+    matchedMains: number;
+    overlapTotalMs: number;
+    blockMatched: number[];
+}
+
+// How well a translation timeline fits the main one: the number of main cues
+// with at least one material overlap (in total and per block of consecutive
+// main cues), plus the summed best overlap per cue.
+function scoreAlignment<T extends SubtitleCue>(
+    mainTimed: Array<TimedCue<T>>,
+    transTimed: Array<TimedCue<T>>,
+    mergeThresholdMs: number
+): AlignmentScore {
+    let matchedMains = 0;
+    let overlapTotalMs = 0;
+    const blockMatched: number[] = new Array(Math.ceil(mainTimed.length / ALIGNMENT_BLOCK_CUES) || 1).fill(0);
+    let cursor = 0;
+
+    for (let mi = 0; mi < mainTimed.length; mi++) {
+        const mainCue = mainTimed[mi];
+        while (cursor < transTimed.length && transTimed[cursor].endMs < mainCue.startMs - mergeThresholdMs) {
+            cursor++;
+        }
+
+        let bestOverlapMs = 0;
+        let hasMaterial = false;
+        for (let i = cursor; i < transTimed.length; i++) {
+            const transCue = transTimed[i];
+            if (transCue.startMs > mainCue.endMs + mergeThresholdMs) break;
+            const overlapMs = Math.max(0, Math.min(mainCue.endMs, transCue.endMs) - Math.max(mainCue.startMs, transCue.startMs));
+            if (overlapMs > bestOverlapMs) bestOverlapMs = overlapMs;
+            if (!hasMaterial && isMaterialOverlap(mainCue, transCue, overlapMs)) hasMaterial = true;
+        }
+
+        if (hasMaterial) {
+            matchedMains++;
+            blockMatched[Math.floor(mi / ALIGNMENT_BLOCK_CUES)]++;
+        }
+        overlapTotalMs += bestOverlapMs;
+    }
+
+    return { matchedMains, overlapTotalMs, blockMatched };
+}
+
+function isBetterAlignment(aligned: AlignmentScore, raw: AlignmentScore): boolean {
+    // Reject any alignment that noticeably degrades one region of the file,
+    // even if it helps elsewhere — that is the signature of a wrong anchor.
+    for (let b = 0; b < raw.blockMatched.length; b++) {
+        const rawBlock = raw.blockMatched[b];
+        const alignedBlock = aligned.blockMatched[b] || 0;
+        const allowedLoss = Math.max(MIN_BLOCK_LOSS_ALLOWANCE, Math.floor(rawBlock * MAX_BLOCK_LOSS_RATIO));
+        if (alignedBlock < rawBlock - allowedLoss) return false;
+    }
+    if (aligned.matchedMains !== raw.matchedMains) return aligned.matchedMains > raw.matchedMains;
+    return aligned.overlapTotalMs > raw.overlapTotalMs * ALIGNMENT_OVERLAP_IMPROVEMENT;
 }
 
 export async function rankSubtitleCandidates<T extends SubtitleCandidate>(

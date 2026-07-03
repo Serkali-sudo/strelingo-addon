@@ -190,6 +190,26 @@ const toSrtTime = (ms) => {
     assert.ok(matched >= 110, `expected at least 110 drift-corrected matches, got ${matched}`);
 }
 
+// Already-synced files must pass through the aligner untouched: every main
+// cue keeps exactly its own translation.
+{
+    const mains = [];
+    const trans = [];
+    let startMs = 5000;
+    for (let i = 0; i < 40; i++) {
+        const endMs = startMs + 1500 + ((i * 631) % 900);
+        mains.push(cue(String(i + 1), toSrtTime(startMs), toSrtTime(endMs), `M${i + 1}`));
+        trans.push(cue(String(i + 1), toSrtTime(startMs), toSrtTime(endMs), `T${i + 1}`));
+        startMs = endMs + 1500 + ((i * 811) % 1200);
+    }
+
+    const merged = mergeSubtitlesByTime(mains, trans);
+    assert.equal(merged.length, 40);
+    for (let i = 0; i < merged.length; i++) {
+        assert.equal(merged[i].text, `<b>M${i + 1}</b>\n<i>> T${i + 1}</i>`);
+    }
+}
+
 // Music/lyric lines and punctuation-only leftovers are stripped.
 {
     assert.equal(sanitizeSubtitleText('♪ dramatic music ♪\nRun!'), 'Run!');
