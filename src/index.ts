@@ -652,6 +652,7 @@ async function fetchLegacyOpenSubtitlesFallback(
         }
 
         const searchUrl = buildLegacyOpenSubtitlesSearchUrl(searchParams);
+        console.log(`[legacy] GET ${searchUrl}`);
 
         try {
             const response = await fetch(searchUrl, {
