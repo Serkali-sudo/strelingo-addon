@@ -30,14 +30,26 @@ or visit the addon page here:
 [https://strelingo.pronouncetube.com](https://strelingo.pronouncetube.com).
 
 ## Providers
+
+### Default (no setup required)
 * OpenSubtitles.
 * [Buta no subs Stremio addon](https://github.com/Pigamer37/buta-no-subs-stremio-addon) for better japanese subtitles (Implemented by @Pigamer37).
 
+### Optional (bring your own API key)
+Extra subtitle sources you can enable on the addon install page. They live in a collapsed **"Optional Providers"** section and stay **disabled unless you paste in their API key** — your two defaults above are never affected. Each field on the config page shows the provider's free usage limits and a **"Get key"** link.
+
+* **[Wyzie Subs](https://sub.wyzie.io)** — an aggregator that itself pulls from many upstream sources (OpenSubtitles, SubDL, Subf2m, Podnapisi, Gestdown, YIFY, and several anime sources, plus on-demand AI translation). A set of checkboxes lets you choose exactly which of these sources to query. A free key covers the free sources; a Pro key unlocks the rest. Get a free key at [store.wyzie.io/redeem](https://store.wyzie.io/redeem).
+* **[SubSource](https://subsource.net)** — large community subtitle catalog (successor to the Subscene archive). Downloads arrive as ZIP archives and are extracted automatically. Limits: 60 requests/min, 1,800/hour, 7,200/day.
+
+**Providers mode.** A toggle controls when the optional providers are queried:
+* **Fallback** *(default)* — only query your provider keys when OpenSubtitles + Buta-no-subs return nothing for your chosen main/translation language. This conserves your API credit.
+* **Parallel** — always query enabled providers alongside the defaults and pool all results, for the widest coverage (uses more API credit).
+
 ## Features
 
-*   Fetches subtitles from OpenSubtitles.
+*   Fetches subtitles from OpenSubtitles, plus optional API-key providers (Wyzie Subs, SubSource).
 *   Automatically detects the best available subtitles for two selected languages.
-*   Handles Gzip compressed subtitles.
+*   Handles multiple subtitle formats (SRT, ASS/SSA, VTT, SUB, SBV, SMI, LRC, TTML) and auto-extracts ZIP-archived downloads from providers.
 *   **Robust encoding detection:** Handles UTF-16 LE/BE (with BOM), double-encoded BOMs, legacy encodings (Windows-1251, ISO-8859-x), and repairs double-encoded UTF-8 text (Implemented by @ravisorg).
 *   Merges the main language and translation language subtitles into a single `.srt` file.
 *   Formats the translation line to be *italic* and <font color="yellow">yellow</font> (yellow color doesnt work due to stremio overriding the color of subtitles).
@@ -45,6 +57,7 @@ or visit the addon page here:
 *   Configurable via Stremio addon settings for:
     *   Main Language (Audio Language)
     *   Translation Language (Your Language)
+    *   Optional provider API keys (Wyzie, SubSource), Wyzie source selection, and fallback/parallel provider mode
 
 ## Requirements
 
@@ -102,6 +115,7 @@ The addon will be available at `http://localhost:7000/manifest.json`.
     *   Select your desired **Main Language** (typically the language the audio is in).
     *   Select your desired **Translation Language** (typically your native language or the one you want for comparison).
     *   **Note:** The Translation Language field is automatically pre-filled with your browser's language if not previously configured!
+    *   *(Optional)* Expand the **"Optional Providers"** section to add Wyzie / SubSource API keys, pick which Wyzie sources to query, and set the provider mode. Leave it collapsed/empty to use only the default sources.
 4.  Click the "Install Addon" button or link displayed on the page (it might be at the bottom).
 5.  Your browser might ask for permission to open the link with Stremio. Allow it.
 6.  Stremio should open and prompt you to confirm the installation **with your selected configuration**. Click "Install".
@@ -125,9 +139,9 @@ Tests validate that decoded subtitles contain expected native-language strings (
 
 *   **Backend:** Node.js + TypeScript
 *   **Framework:** Hono (works on Vercel, Cloudflare Workers, and Node.js)
-*   **Subtitle Source:** OpenSubtitles API, [Buta no Subs Stremio addon](https://github.com/Pigamer37/buta-no-subs-stremio-addon)
+*   **Subtitle Sources:** OpenSubtitles API, [Buta no Subs Stremio addon](https://github.com/Pigamer37/buta-no-subs-stremio-addon), and optional key-based providers ([Wyzie Subs](https://sub.wyzie.io), [SubSource](https://subsource.net))
 *   **HTTP Requests:** Native fetch
 *   **Subtitle Parsing:** `srt-parser-2` + built-in multi-format converter
-*   **Gzip Decompression:** `pako`
+*   **ZIP Extraction:** `fflate` (for zipped provider downloads)
 *   **Character Encoding Detection:** `chardet`
 *   **Character Encoding Decoding:** `iconv-lite` 
