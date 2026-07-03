@@ -32,6 +32,14 @@ interface MatchCandidate<T extends SubtitleCue> {
     startGapMs: number;
 }
 
+// One estimated sync point: at main time `mainMs` the translation runs
+// `offsetMs` late (transMs = mainMs + offsetMs).
+interface AlignmentAnchor {
+    mainMs: number;
+    transMs: number;
+    offsetMs: number;
+}
+
 export interface RankedSubtitleCandidate<T extends SubtitleCandidate> {
     sub: T;
     score: number;
@@ -105,13 +113,38 @@ const RELEASE_TOKENS = new Set([
     'dts'
 ]);
 
-const MAX_OFFSET_SAMPLE_SIZE = 160;
-const MAX_AUTO_OFFSET_MS = 15000;
-const OFFSET_CONFIDENCE_WINDOW_MS = 750;
-const MIN_OFFSET_CONFIDENCE = 0.6;
+// --- Time-alignment tuning ---
+// Cues per tracking segment; the alignment is estimated per segment so it can
+// follow fps drift and step offsets instead of assuming one global shift.
+const SEGMENT_TARGET_CUES = 16;
+const MAX_ALIGNMENT_SEGMENTS = 64;
+const MAX_SEGMENT_SAMPLES = 24;
+// Delta search window around the previous segment's offset. The wide retry
+// covers larger jumps (badly synced releases, removed ad breaks).
+const BASE_SEARCH_WINDOW_MS = 15000;
+const WIDE_SEARCH_WINDOW_MS = 60000;
+// Width of the densest start-delta cluster taken as a segment's true offset.
+const CLUSTER_WINDOW_MS = 1500;
+const MIN_SEGMENT_PAIRS = 3;
+const MIN_SEGMENT_PAIR_RATIO = 0.3;
+// Offsets below this are already absorbed by the merge threshold.
+const MIN_APPLY_OFFSET_MS = 350;
+// If every segment offset agrees within this, a single constant shift is used.
+const CONSTANT_OFFSET_TOLERANCE_MS = 400;
+// A segment offset this far from two agreeing neighbours is discarded as noise.
+const ANCHOR_SPIKE_MS = 4000;
+const ANCHOR_NEIGHBOR_AGREEMENT_MS = 1500;
+// A translation cue owned by a neighbouring main cue is repeated here only
+// when it also covers at least this fraction of this main cue.
+const SPANNING_COVERAGE_RATIO = 0.5;
+
 const STANDALONE_SDH_LINE_PATTERN = /^\s*(?:-\s*)?[\[(][^\])]+[\])]\s*$/;
 const ANNOTATION_PATTERN = /[\[(][^\])]*[\])]/g;
 const SPEAKER_LABEL_PATTERN = /^\s*(?:-\s*)?(?:[A-Z][A-Z0-9'._-]*)(?:\s+[A-Z][A-Z0-9'._-]*){0,4}\s*:\s*/;
+const MUSIC_NOTE_LINE_PATTERN = /^\s*(?:-\s*)?[♪♫♬]/;
+const HASH_MUSIC_LINE_PATTERN = /^\s*(?:-\s*)?#.*#\s*$/;
+const MUSIC_NOTE_CHARS_PATTERN = /[♪♫♬]/g;
+const PUNCTUATION_ONLY_LINE_PATTERN = /^[\s\-–—.,;:!?'"“”‘’#~*]*$/;
 
 export function sanitizeSubtitleText(text: string): string {
     if (!text) return '';
@@ -125,8 +158,16 @@ export function sanitizeSubtitleText(text: string): string {
         .replace(/&gt;/gi, '>')
         .replace(/&amp;/gi, '&')
         .split(/\r?\n|\r/g)
-        .map(line => line.replace(SPEAKER_LABEL_PATTERN, '').replace(ANNOTATION_PATTERN, ' ').trim())
-        .filter(line => line && !STANDALONE_SDH_LINE_PATTERN.test(line))
+        .map(line => {
+            if (STANDALONE_SDH_LINE_PATTERN.test(line)) return '';
+            if (MUSIC_NOTE_LINE_PATTERN.test(line) || HASH_MUSIC_LINE_PATTERN.test(line)) return '';
+            return line
+                .replace(SPEAKER_LABEL_PATTERN, '')
+                .replace(ANNOTATION_PATTERN, ' ')
+                .replace(MUSIC_NOTE_CHARS_PATTERN, ' ')
+                .trim();
+        })
+        .filter(line => line && !PUNCTUATION_ONLY_LINE_PATTERN.test(line))
         .join(' ')
         .replace(/\s+/g, ' ')
         .replace(/\s+([.,!?;:])/g, '$1')
@@ -152,28 +193,55 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
 ): T[] {
     const mainTimed = buildTimedCues(mainSubs);
     const rawTransTimed = buildTimedCues(transSubs);
-    const estimatedOffsetMs = estimateSubtitleOffsetMs(mainTimed, rawTransTimed);
-    const transTimed = estimatedOffsetMs === 0
-        ? rawTransTimed
-        : shiftTimedCues(rawTransTimed, -estimatedOffsetMs);
+    const anchors = estimateAlignmentAnchors(mainTimed, rawTransTimed);
+    const transTimed = alignTransCues(rawTransTimed, anchors);
+
     const mergedSubs: T[] = [];
+    if (mainTimed.length === 0) return mergedSubs;
+
+    // Pass 1: give each translation cue a single owner — the main cue it
+    // overlaps most. This prevents a cue that merely brushes a neighbouring
+    // main cue (boundary jitter) from being duplicated onto it.
+    const bestMainForTrans = new Int32Array(transTimed.length).fill(-1);
+    const bestOverlapForTrans = new Float64Array(transTimed.length);
+    const windowStart = new Int32Array(mainTimed.length);
+    const windowEnd = new Int32Array(mainTimed.length);
     let transCursor = 0;
 
-    for (const mainCue of mainTimed) {
+    for (let mi = 0; mi < mainTimed.length; mi++) {
+        const mainCue = mainTimed[mi];
         while (
             transCursor < transTimed.length &&
             transTimed[transCursor].endMs < mainCue.startMs - mergeThresholdMs
         ) {
             transCursor++;
         }
+        windowStart[mi] = transCursor;
 
-        const materialMatches: TimedCue<T>[] = [];
-        let bestMatch: MatchCandidate<T> | null = null;
-
-        for (let i = transCursor; i < transTimed.length; i++) {
+        let i = transCursor;
+        for (; i < transTimed.length; i++) {
             const transCue = transTimed[i];
             if (transCue.startMs > mainCue.endMs + mergeThresholdMs) break;
 
+            const overlapMs = Math.max(0, Math.min(mainCue.endMs, transCue.endMs) - Math.max(mainCue.startMs, transCue.startMs));
+            if (overlapMs > bestOverlapForTrans[i]) {
+                bestOverlapForTrans[i] = overlapMs;
+                bestMainForTrans[i] = mi;
+            }
+        }
+        windowEnd[mi] = i;
+    }
+
+    // Pass 2: build the merged text. A main cue takes the translation cues it
+    // owns (plus any cue that genuinely spans it), and falls back to the best
+    // nearby cue when it owns none.
+    for (let mi = 0; mi < mainTimed.length; mi++) {
+        const mainCue = mainTimed[mi];
+        const chosenTranslations: Array<TimedCue<T>> = [];
+        let fallback: MatchCandidate<T> | null = null;
+
+        for (let i = windowStart[mi]; i < windowEnd[mi]; i++) {
+            const transCue = transTimed[i];
             const match = scoreTimeMatch(mainCue, transCue);
             const gapMs = match.overlapMs > 0
                 ? 0
@@ -186,27 +254,33 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
             if (match.overlapMs <= 0 && gapMs > mergeThresholdMs) continue;
 
             if (isMaterialOverlap(mainCue, transCue, match.overlapMs)) {
-                materialMatches.push(transCue);
+                const isOwner = bestMainForTrans[i] === mi;
+                const spansThisMain = match.overlapMs >= SPANNING_COVERAGE_RATIO * mainCue.durationMs;
+                if (isOwner || spansThisMain) {
+                    chosenTranslations.push(transCue);
+                }
             }
 
-            if (!bestMatch || isBetterTimeMatch(match, bestMatch)) {
-                bestMatch = match;
+            if (!fallback || isBetterTimeMatch(match, fallback)) {
+                fallback = match;
             }
         }
 
-        const chosenTranslations = materialMatches.length > 0
-            ? materialMatches
-            : bestMatch
-                ? [bestMatch.cue]
+        const picked = chosenTranslations.length > 0
+            ? chosenTranslations
+            : fallback
+                ? [fallback.cue]
                 : [];
 
         let mergedText = mainCue.text;
-        if (chosenTranslations.length > 0) {
-            const translationText = chosenTranslations
-                .map(cue => cue.text)
-                .filter(Boolean)
-                .join(' ');
-
+        if (picked.length > 0) {
+            const parts: string[] = [];
+            for (const translation of picked) {
+                if (translation.text && (parts.length === 0 || parts[parts.length - 1] !== translation.text)) {
+                    parts.push(translation.text);
+                }
+            }
+            const translationText = parts.join(' ');
             if (translationText) {
                 mergedText = (`<b>${mainCue.text}</b>\n<i>> ${translationText}</i>`).trim();
             }
@@ -222,42 +296,194 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
     return mergedSubs;
 }
 
-function estimateSubtitleOffsetMs<T extends SubtitleCue>(
+// Estimates how the translation timeline maps onto the main timeline by
+// tracking the start-time offset segment by segment. Each segment finds the
+// densest cluster of pairwise start deltas near the previous segment's offset,
+// so the estimate follows constant shifts, linear fps drift and step changes
+// without any global assumption. Cost is O(samples * candidates-per-window).
+function estimateAlignmentAnchors<T extends SubtitleCue>(
     mainTimed: Array<TimedCue<T>>,
     transTimed: Array<TimedCue<T>>
-): number {
-    if (mainTimed.length < 3 || transTimed.length < 3) return 0;
+): AlignmentAnchor[] {
+    if (mainTimed.length < 3 || transTimed.length < 3) return [];
 
-    const sampleCount = Math.min(MAX_OFFSET_SAMPLE_SIZE, mainTimed.length, transTimed.length);
-    const deltas: number[] = [];
+    const transStarts = transTimed.map(cue => cue.startMs);
+    const segmentCount = Math.max(1, Math.min(MAX_ALIGNMENT_SEGMENTS, Math.ceil(mainTimed.length / SEGMENT_TARGET_CUES)));
+    const anchors: AlignmentAnchor[] = [];
+    let prevOffsetMs = 0;
+
+    for (let s = 0; s < segmentCount; s++) {
+        const from = Math.floor(s * mainTimed.length / segmentCount);
+        const to = Math.floor((s + 1) * mainTimed.length / segmentCount);
+        const anchor = estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, BASE_SEARCH_WINDOW_MS)
+            || estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, WIDE_SEARCH_WINDOW_MS);
+        if (!anchor) continue;
+        anchors.push(anchor);
+        prevOffsetMs = anchor.offsetMs;
+    }
+
+    return filterAnchorSpikes(anchors);
+}
+
+function estimateSegmentOffset<T extends SubtitleCue>(
+    mainTimed: Array<TimedCue<T>>,
+    transTimed: Array<TimedCue<T>>,
+    transStarts: number[],
+    from: number,
+    to: number,
+    centerOffsetMs: number,
+    searchWindowMs: number
+): AlignmentAnchor | null {
+    const segmentLength = to - from;
+    if (segmentLength <= 0) return null;
+
+    const sampleCount = Math.min(MAX_SEGMENT_SAMPLES, segmentLength);
+    const perCue: Array<{ mainMs: number; deltas: number[] }> = [];
+    const allDeltas: number[] = [];
 
     for (let i = 0; i < sampleCount; i++) {
-        const mainIndex = sampleIndex(i, sampleCount, mainTimed.length);
-        const transIndex = sampleIndex(i, sampleCount, transTimed.length);
-        const mainCue = mainTimed[mainIndex];
-        const transCue = transTimed[transIndex];
+        const mainCue = mainTimed[from + Math.floor(i * segmentLength / sampleCount)];
+        const firstIndex = lowerBound(transStarts, mainCue.startMs + centerOffsetMs - searchWindowMs);
+        const deltas: number[] = [];
 
-        const durationRatio = Math.min(mainCue.durationMs, transCue.durationMs) / Math.max(mainCue.durationMs, transCue.durationMs);
-        if (durationRatio < 0.25) continue;
+        for (let j = firstIndex; j < transTimed.length; j++) {
+            const transCue = transTimed[j];
+            if (transCue.startMs > mainCue.startMs + centerOffsetMs + searchWindowMs) break;
 
-        const delta = transCue.startMs - mainCue.startMs;
-        if (Math.abs(delta) <= MAX_AUTO_OFFSET_MS) {
-            deltas.push(delta);
+            const durationRatio = Math.min(mainCue.durationMs, transCue.durationMs) / Math.max(mainCue.durationMs, transCue.durationMs);
+            if (durationRatio < 0.25) continue;
+
+            deltas.push(transCue.startMs - mainCue.startMs);
+        }
+
+        if (deltas.length > 0) {
+            perCue.push({ mainMs: mainCue.startMs, deltas });
+            for (const delta of deltas) allDeltas.push(delta);
         }
     }
 
-    if (deltas.length < 3) return 0;
+    if (perCue.length < MIN_SEGMENT_PAIRS) return null;
 
-    deltas.sort((a, b) => a - b);
-    const median = deltas[Math.floor(deltas.length / 2)];
-    const confidentSamples = deltas.filter(delta => Math.abs(delta - median) <= OFFSET_CONFIDENCE_WINDOW_MS).length;
-    const confidence = confidentSamples / deltas.length;
+    // The true offset shows up as the densest cluster of deltas: every cue
+    // with a genuine counterpart contributes one delta there, while deltas to
+    // unrelated neighbouring cues spread out.
+    allDeltas.sort((a, b) => a - b);
+    let clusterStart = 0;
+    let clusterCount = 0;
+    for (let hi = 0, lo = 0; hi < allDeltas.length; hi++) {
+        while (allDeltas[hi] - allDeltas[lo] > CLUSTER_WINDOW_MS) lo++;
+        if (hi - lo + 1 > clusterCount) {
+            clusterCount = hi - lo + 1;
+            clusterStart = lo;
+        }
+    }
+    const clusterLo = allDeltas[clusterStart];
+    const clusterHi = clusterLo + CLUSTER_WINDOW_MS;
+    const clusterCenter = clusterLo + CLUSTER_WINDOW_MS / 2;
 
-    if (confidence < MIN_OFFSET_CONFIDENCE) return 0;
+    // At most one refined pair per sampled cue, so a burst of nearby cues
+    // cannot outvote the rest of the segment.
+    const pairMainMs: number[] = [];
+    const pairDeltas: number[] = [];
+    for (const { mainMs, deltas } of perCue) {
+        let best: number | null = null;
+        for (const delta of deltas) {
+            if (delta < clusterLo || delta > clusterHi) continue;
+            if (best === null || Math.abs(delta - clusterCenter) < Math.abs(best - clusterCenter)) {
+                best = delta;
+            }
+        }
+        if (best !== null) {
+            pairMainMs.push(mainMs);
+            pairDeltas.push(best);
+        }
+    }
 
-    return Math.abs(median) > OFFSET_CONFIDENCE_WINDOW_MS
-        ? Math.round(median)
-        : 0;
+    if (pairDeltas.length < MIN_SEGMENT_PAIRS || pairDeltas.length < MIN_SEGMENT_PAIR_RATIO * perCue.length) {
+        return null;
+    }
+
+    const offsetMs = median(pairDeltas);
+    const mainMs = median(pairMainMs);
+    return { mainMs, transMs: mainMs + offsetMs, offsetMs };
+}
+
+function filterAnchorSpikes(anchors: AlignmentAnchor[]): AlignmentAnchor[] {
+    if (anchors.length < 3) return enforceMonotonicAnchors(anchors);
+
+    const kept = anchors.filter((anchor, i) => {
+        if (i === 0 || i === anchors.length - 1) return true;
+        const prev = anchors[i - 1];
+        const next = anchors[i + 1];
+        const neighborsAgree = Math.abs(prev.offsetMs - next.offsetMs) <= ANCHOR_NEIGHBOR_AGREEMENT_MS;
+        const isSpike = Math.abs(anchor.offsetMs - prev.offsetMs) > ANCHOR_SPIKE_MS
+            && Math.abs(anchor.offsetMs - next.offsetMs) > ANCHOR_SPIKE_MS;
+        return !(neighborsAgree && isSpike);
+    });
+
+    return enforceMonotonicAnchors(kept);
+}
+
+function enforceMonotonicAnchors(anchors: AlignmentAnchor[]): AlignmentAnchor[] {
+    const monotonic: AlignmentAnchor[] = [];
+    for (const anchor of anchors) {
+        const last = monotonic[monotonic.length - 1];
+        if (!last || (anchor.mainMs > last.mainMs && anchor.transMs > last.transMs)) {
+            monotonic.push(anchor);
+        }
+    }
+    return monotonic;
+}
+
+function alignTransCues<T extends SubtitleCue>(
+    transTimed: Array<TimedCue<T>>,
+    anchors: AlignmentAnchor[]
+): Array<TimedCue<T>> {
+    if (anchors.length === 0) return transTimed;
+
+    const offsets = anchors.map(anchor => anchor.offsetMs);
+    const offsetRange = Math.max(...offsets) - Math.min(...offsets);
+
+    if (anchors.length === 1 || offsetRange <= CONSTANT_OFFSET_TOLERANCE_MS) {
+        const constantOffset = Math.round(median(offsets));
+        if (Math.abs(constantOffset) < MIN_APPLY_OFFSET_MS) return transTimed;
+        return shiftTimedCues(transTimed, -constantOffset);
+    }
+
+    // Piecewise-linear warp between anchors (extrapolated at the edges). This
+    // covers both fps drift (anchors along a line) and step offsets.
+    return transTimed.map(cue => {
+        const startMs = mapTransToMainTime(cue.startMs, anchors);
+        let endMs = mapTransToMainTime(cue.endMs, anchors);
+        if (endMs <= startMs) endMs = startMs + cue.durationMs;
+        return {
+            ...cue,
+            startMs,
+            endMs,
+            midMs: (startMs + endMs) / 2,
+            durationMs: endMs - startMs
+        };
+    });
+}
+
+function mapTransToMainTime(transMs: number, anchors: AlignmentAnchor[]): number {
+    if (anchors.length === 1) return transMs - anchors[0].offsetMs;
+
+    // Rightmost anchor at or before transMs, clamped so [k, k+1] is valid;
+    // out-of-range values extrapolate along the nearest anchor pair.
+    let lo = 0;
+    let hi = anchors.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (anchors[mid].transMs <= transMs) lo = mid;
+        else hi = mid - 1;
+    }
+    const k = Math.min(lo, anchors.length - 2);
+    const a = anchors[k];
+    const b = anchors[k + 1];
+    const fraction = (transMs - a.transMs) / (b.transMs - a.transMs);
+    const offsetMs = a.offsetMs + fraction * (b.offsetMs - a.offsetMs);
+    return transMs - offsetMs;
 }
 
 export async function rankSubtitleCandidates<T extends SubtitleCandidate>(
@@ -357,6 +583,15 @@ function buildTimedCues<T extends SubtitleCue>(subs: T[]): Array<TimedCue<T>> {
         });
     }
 
+    // Matching and alignment both assume start-time order; real files almost
+    // always are sorted, so this is a cheap safety net for the ones that aren't.
+    for (let i = 1; i < timed.length; i++) {
+        if (timed[i].startMs < timed[i - 1].startMs) {
+            timed.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+            break;
+        }
+    }
+
     return timed;
 }
 
@@ -369,9 +604,21 @@ function shiftTimedCues<T extends SubtitleCue>(timedCues: Array<TimedCue<T>>, of
     }));
 }
 
-function sampleIndex(sampleNumber: number, sampleCount: number, itemCount: number): number {
-    if (sampleCount <= 1 || itemCount <= 1) return 0;
-    return Math.round(sampleNumber * (itemCount - 1) / (sampleCount - 1));
+function lowerBound(sorted: number[], target: number): number {
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (sorted[mid] < target) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+function median(values: number[]): number {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function scoreTimeMatch<T extends SubtitleCue>(mainCue: TimedCue<T>, transCue: TimedCue<T>): MatchCandidate<T> {

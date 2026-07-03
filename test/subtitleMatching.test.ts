@@ -7,6 +7,14 @@ import {
 
 const cue = (id, startTime, endTime, text) => ({ id, startTime, endTime, text });
 
+const toSrtTime = (ms) => {
+    const hh = String(Math.floor(ms / 3600000)).padStart(2, '0');
+    const mm = String(Math.floor(ms / 60000) % 60).padStart(2, '0');
+    const ss = String(Math.floor(ms / 1000) % 60).padStart(2, '0');
+    const mmm = String(ms % 1000).padStart(3, '0');
+    return `${hh}:${mm}:${ss},${mmm}`;
+};
+
 {
     const merged = mergeSubtitlesByTime(
         [cue('1', '00:00:10,000', '00:00:14,000', '<b>Hello</b>\nworld')],
@@ -106,6 +114,88 @@ const cue = (id, startTime, endTime, text) => ({ id, startTime, endTime, text })
     );
 
     assert.equal(merged[0].text, '<b>Hello</b>\n<i>> Hola</i>');
+}
+
+// Boundary jitter: a translation cue that mostly covers one main cue must not
+// be duplicated onto the neighbouring main cue it only brushes.
+{
+    const merged = mergeSubtitlesByTime(
+        [
+            cue('1', '00:00:10,000', '00:00:13,000', 'First main'),
+            cue('2', '00:00:13,200', '00:00:16,000', 'Second main')
+        ],
+        [
+            cue('1', '00:00:10,100', '00:00:13,600', 'Primera'),
+            cue('2', '00:00:13,700', '00:00:15,900', 'Segunda')
+        ]
+    );
+
+    assert.equal(merged[0].text, '<b>First main</b>\n<i>> Primera</i>');
+    assert.equal(merged[1].text, '<b>Second main</b>\n<i>> Segunda</i>');
+}
+
+// A translation cue that genuinely spans two main cues still shows on both.
+{
+    const merged = mergeSubtitlesByTime(
+        [
+            cue('1', '00:00:10,000', '00:00:12,000', 'One'),
+            cue('2', '00:00:12,100', '00:00:14,000', 'Two')
+        ],
+        [cue('1', '00:00:10,000', '00:00:14,000', 'Ambos')]
+    );
+
+    assert.equal(merged[0].text, '<b>One</b>\n<i>> Ambos</i>');
+    assert.equal(merged[1].text, '<b>Two</b>\n<i>> Ambos</i>');
+}
+
+// Consecutive identical translation lines are collapsed within one entry.
+{
+    const merged = mergeSubtitlesByTime(
+        [cue('1', '00:00:10,000', '00:00:14,000', 'Main')],
+        [
+            cue('1', '00:00:10,000', '00:00:11,800', 'Same line'),
+            cue('2', '00:00:12,000', '00:00:13,800', 'Same line')
+        ]
+    );
+
+    assert.equal(merged[0].text, '<b>Main</b>\n<i>> Same line</i>');
+}
+
+// Linear drift (23.976 vs 25 fps style) plus a constant lag: the piecewise
+// alignment should recover essentially every pairing.
+{
+    const mains = [];
+    const trans = [];
+    const scale = 1.0427;
+    let startMs = 10000;
+    for (let i = 0; i < 120; i++) {
+        const endMs = startMs + 2000;
+        mains.push(cue(String(i + 1), toSrtTime(startMs), toSrtTime(endMs), `Main ${i + 1}`));
+        trans.push(cue(
+            String(i + 1),
+            toSrtTime(Math.round(startMs * scale) + 500),
+            toSrtTime(Math.round(endMs * scale) + 500),
+            `Trans ${i + 1}`
+        ));
+        startMs = endMs + 2000 + ((i * 937) % 2500);
+    }
+
+    const merged = mergeSubtitlesByTime(mains, trans);
+    assert.equal(merged.length, 120);
+
+    let matched = 0;
+    for (let i = 0; i < merged.length; i++) {
+        if (merged[i].text === `<b>Main ${i + 1}</b>\n<i>> Trans ${i + 1}</i>`) matched++;
+    }
+    assert.ok(matched >= 110, `expected at least 110 drift-corrected matches, got ${matched}`);
+}
+
+// Music/lyric lines and punctuation-only leftovers are stripped.
+{
+    assert.equal(sanitizeSubtitleText('♪ dramatic music ♪\nRun!'), 'Run!');
+    assert.equal(sanitizeSubtitleText('- [groans]\n- What?'), '- What?');
+    assert.equal(sanitizeSubtitleText('[thunder]\n-'), '');
+    assert.equal(sanitizeSubtitleText('# happy birthday to you #\nBlow the candles.'), 'Blow the candles.');
 }
 
 console.log('subtitleMatching tests passed');
