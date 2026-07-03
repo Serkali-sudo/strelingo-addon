@@ -21,8 +21,7 @@ import {
     hasAnyOptionalProvider,
     parseOptionalProviderConfig,
     resolveRequestedLangs,
-    type ProviderSub,
-    type RequestedLang
+    type ProviderSub
 } from './providers';
 import {
     mergeSubtitlesByTime,
@@ -1624,40 +1623,45 @@ async function handleSubtitlesRequest(c: any) {
         // as empty so optional providers can still satisfy the request on their own.
         let allSubtitles: any[] = (await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese)) || [];
 
-        // Optional, API-key providers (Wyzie / SubSource). Lazily resolves
-        // the requested languages into the per-provider forms only when needed.
+        // Optional, API-key providers (Wyzie / SubSource). Query only the specific
+        // languages passed in (so we never waste API credit on a language the
+        // defaults already covered).
         const optionalCfg = parseOptionalProviderConfig(configObj);
         const optionalEnabled = hasAnyOptionalProvider(optionalCfg);
-        let requestedLangs: RequestedLang[] = [];
-        const fetchProviderSubs = async (): Promise<ProviderSub[]> => {
-            if (!optionalEnabled) return [];
-            if (requestedLangs.length === 0) {
-                requestedLangs = await resolveRequestedLangs(
-                    [mainLang || 'eng', transLang || 'eng'],
-                    (code3) => languageMap[code3 as keyof typeof languageMap] || code3
-                );
-            }
-            return fetchOptionalProviderSubtitles({ imdbId, type, season, episode, langs: requestedLangs }, optionalCfg);
+        const langNameOf = (code3: string) => languageMap[code3 as keyof typeof languageMap] || code3;
+        const fetchProviderSubs = async (langCodes: string[]): Promise<ProviderSub[]> => {
+            const uniqueCodes = [...new Set(langCodes.filter(Boolean))] as string[];
+            if (!optionalEnabled || uniqueCodes.length === 0) return [];
+            const langs = await resolveRequestedLangs(uniqueCodes, langNameOf);
+            return fetchOptionalProviderSubtitles({ imdbId, type, season, episode, langs }, optionalCfg);
         };
 
+        // Parallel mode: query providers for both languages up front and pool the
+        // results with the defaults for the widest coverage.
         if (optionalEnabled && optionalCfg.mode === 'parallel') {
-            const providerSubs = await fetchProviderSubs();
+            const providerSubs = await fetchProviderSubs([mainLang, transLang].filter((l): l is string => Boolean(l)));
             if (providerSubs.length > 0) allSubtitles = allSubtitles.concat(providerSubs);
         }
 
         let mainSubInfoList = filterSubtitlesByLanguage(allSubtitles, mainLang || 'eng');
         let transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
 
-        // Fallback mode: only reach out to optional providers when the built-in
-        // sources didn't supply both a main and a translation subtitle.
-        if (optionalEnabled && optionalCfg.mode === 'fallback'
-            && ((mainSubInfoList?.length ?? 0) === 0 || (transSubInfoList?.length ?? 0) === 0)) {
-            console.log('[optional] fallback mode — defaults incomplete, querying providers');
-            const providerSubs = await fetchProviderSubs();
-            if (providerSubs.length > 0) {
-                allSubtitles = allSubtitles.concat(providerSubs);
-                mainSubInfoList = filterSubtitlesByLanguage(allSubtitles, mainLang || 'eng');
-                transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
+        // Fallback mode: query providers ONLY for the language(s) the defaults are
+        // missing — e.g. if English is already covered but Turkish isn't, ask the
+        // providers for Turkish only.
+        if (optionalEnabled && optionalCfg.mode === 'fallback') {
+            const missingLangs: string[] = [];
+            if ((mainSubInfoList?.length ?? 0) === 0 && mainLang) missingLangs.push(mainLang);
+            if ((transSubInfoList?.length ?? 0) === 0 && transLang) missingLangs.push(transLang);
+
+            if (missingLangs.length > 0) {
+                console.log(`[optional] fallback — querying providers for missing: ${missingLangs.join(', ')}`);
+                const providerSubs = await fetchProviderSubs(missingLangs);
+                if (providerSubs.length > 0) {
+                    allSubtitles = allSubtitles.concat(providerSubs);
+                    mainSubInfoList = filterSubtitlesByLanguage(allSubtitles, mainLang || 'eng');
+                    transSubInfoList = filterSubtitlesByLanguage(allSubtitles, transLang || 'eng');
+                }
             }
         }
 
