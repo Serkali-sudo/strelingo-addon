@@ -38,6 +38,9 @@ interface AlignmentAnchor {
     mainMs: number;
     transMs: number;
     offsetMs: number;
+    pairCount: number;
+    pairRatio: number;
+    segmentIndex: number;
 }
 
 export interface RankedSubtitleCandidate<T extends SubtitleCandidate> {
@@ -123,6 +126,17 @@ const MAX_SEGMENT_SAMPLES = 24;
 // covers larger jumps (badly synced releases, removed ad breaks).
 const BASE_SEARCH_WINDOW_MS = 15000;
 const WIDE_SEARCH_WINDOW_MS = 60000;
+// Until the tracker has locked onto the true offset once, it scans this much
+// wider window (PAL-shifted releases can start half a minute or more off) and
+// demands stronger cluster evidence before trusting an initial lock.
+const INITIAL_SEARCH_WINDOW_MS = 120000;
+const MIN_INITIAL_LOCK_PAIRS = 4;
+const MIN_INITIAL_LOCK_RATIO = 0.8;
+// Reconciling the forward and backward tracking passes: anchors within this
+// are the same estimate; on a dispute, the stronger cluster wins only if it
+// clearly dominates, otherwise the segment is dropped.
+const ANCHOR_AGREEMENT_MS = 2000;
+const ANCHOR_DISPUTE_DOMINANCE = 1.25;
 // Width of the densest start-delta cluster taken as a segment's true offset.
 const CLUSTER_WINDOW_MS = 1500;
 const MIN_SEGMENT_PAIRS = 3;
@@ -372,20 +386,84 @@ function estimateAlignmentAnchors<T extends SubtitleCue>(
 
     const transStarts = transTimed.map(cue => cue.startMs);
     const segmentCount = Math.max(1, Math.min(MAX_ALIGNMENT_SEGMENTS, Math.ceil(mainTimed.length / SEGMENT_TARGET_CUES)));
-    const anchors: AlignmentAnchor[] = [];
-    let prevOffsetMs = 0;
-
+    const bounds: Array<{ from: number; to: number }> = [];
     for (let s = 0; s < segmentCount; s++) {
-        const from = Math.floor(s * mainTimed.length / segmentCount);
-        const to = Math.floor((s + 1) * mainTimed.length / segmentCount);
-        const anchor = estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, BASE_SEARCH_WINDOW_MS)
-            || estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, WIDE_SEARCH_WINDOW_MS);
+        bounds.push({
+            from: Math.floor(s * mainTimed.length / segmentCount),
+            to: Math.floor((s + 1) * mainTimed.length / segmentCount)
+        });
+    }
+
+    const forwardOrder = bounds.map((_, i) => i);
+    const forward = trackSegments(mainTimed, transTimed, transStarts, bounds, forwardOrder, 0, false);
+
+    // Second pass in reverse, seeded from the forward tail. It heals segments
+    // the forward pass mis-locked while it was still converging on the true
+    // offset, and regions beyond a jump the forward pass could not follow.
+    const backwardOrder = [...forwardOrder].reverse();
+    const seedOffsetMs = forward.length > 0 ? forward[forward.length - 1].offsetMs : 0;
+    const backward = trackSegments(mainTimed, transTimed, transStarts, bounds, backwardOrder, seedOffsetMs, forward.length > 0);
+
+    return filterAnchorSpikes(reconcileAnchors(forward, backward));
+}
+
+function trackSegments<T extends SubtitleCue>(
+    mainTimed: Array<TimedCue<T>>,
+    transTimed: Array<TimedCue<T>>,
+    transStarts: number[],
+    bounds: Array<{ from: number; to: number }>,
+    order: number[],
+    seedOffsetMs: number,
+    seedLocked: boolean
+): AlignmentAnchor[] {
+    const anchors: AlignmentAnchor[] = [];
+    let prevOffsetMs = seedOffsetMs;
+    let locked = seedLocked;
+
+    for (const s of order) {
+        const { from, to } = bounds[s];
+        let anchor: AlignmentAnchor | null;
+        if (locked) {
+            anchor = estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, BASE_SEARCH_WINDOW_MS, s)
+                || estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, WIDE_SEARCH_WINDOW_MS, s);
+        } else {
+            anchor = estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, INITIAL_SEARCH_WINDOW_MS, s);
+            // A first lock must be unambiguous — a thin cluster inside such a
+            // wide window is more likely rhythm noise than the true offset.
+            if (anchor && anchor.pairCount < MIN_INITIAL_LOCK_PAIRS && anchor.pairRatio < MIN_INITIAL_LOCK_RATIO) {
+                anchor = null;
+            }
+        }
         if (!anchor) continue;
         anchors.push(anchor);
         prevOffsetMs = anchor.offsetMs;
+        locked = true;
     }
 
-    return filterAnchorSpikes(anchors);
+    return anchors;
+}
+
+// Merge the two tracking passes: agreeing anchors keep the stronger estimate,
+// disputes go to the clearly denser cluster, and ambiguous segments are
+// dropped so their neighbours interpolate across them.
+function reconcileAnchors(forward: AlignmentAnchor[], backward: AlignmentAnchor[]): AlignmentAnchor[] {
+    const bySegment = new Map<number, AlignmentAnchor>();
+    for (const anchor of forward) bySegment.set(anchor.segmentIndex, anchor);
+
+    for (const candidate of backward) {
+        const existing = bySegment.get(candidate.segmentIndex);
+        if (!existing) {
+            bySegment.set(candidate.segmentIndex, candidate);
+        } else if (Math.abs(existing.offsetMs - candidate.offsetMs) <= ANCHOR_AGREEMENT_MS) {
+            if (candidate.pairCount > existing.pairCount) bySegment.set(candidate.segmentIndex, candidate);
+        } else if (candidate.pairCount >= existing.pairCount * ANCHOR_DISPUTE_DOMINANCE) {
+            bySegment.set(candidate.segmentIndex, candidate);
+        } else if (existing.pairCount < candidate.pairCount * ANCHOR_DISPUTE_DOMINANCE) {
+            bySegment.delete(candidate.segmentIndex);
+        }
+    }
+
+    return [...bySegment.values()].sort((a, b) => a.mainMs - b.mainMs);
 }
 
 function estimateSegmentOffset<T extends SubtitleCue>(
@@ -395,7 +473,8 @@ function estimateSegmentOffset<T extends SubtitleCue>(
     from: number,
     to: number,
     centerOffsetMs: number,
-    searchWindowMs: number
+    searchWindowMs: number,
+    segmentIndex: number
 ): AlignmentAnchor | null {
     const segmentLength = to - from;
     if (segmentLength <= 0) return null;
@@ -468,7 +547,14 @@ function estimateSegmentOffset<T extends SubtitleCue>(
 
     const offsetMs = median(pairDeltas);
     const mainMs = median(pairMainMs);
-    return { mainMs, transMs: mainMs + offsetMs, offsetMs };
+    return {
+        mainMs,
+        transMs: mainMs + offsetMs,
+        offsetMs,
+        pairCount: pairDeltas.length,
+        pairRatio: pairDeltas.length / perCue.length,
+        segmentIndex
+    };
 }
 
 function filterAnchorSpikes(anchors: AlignmentAnchor[]): AlignmentAnchor[] {

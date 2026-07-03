@@ -235,6 +235,43 @@ const toSrtTime = (ms) => {
     assert.ok(matched >= 110, `expected at least 110 drift-corrected matches, got ${matched}`);
 }
 
+// PAL-style speedup (25 vs 23.976 fps, scale 0.9592) plus a constant shift:
+// the translation starts ~34s early and drifts minutes apart by the end.
+// The initial lock must find the offset far outside the base search window,
+// and the head of the file must be aligned as well as the tail.
+{
+    const mains = [];
+    const trans = [];
+    const scale = 0.9592;
+    const shiftMs = -31500;
+    let startMs = 60000;
+    for (let i = 0; i < 200; i++) {
+        const endMs = startMs + 2000;
+        mains.push(cue(String(i + 1), toSrtTime(startMs), toSrtTime(endMs), `Main ${i + 1}`));
+        trans.push(cue(
+            String(i + 1),
+            toSrtTime(Math.round(startMs * scale) + shiftMs),
+            toSrtTime(Math.round(endMs * scale) + shiftMs),
+            `Trans ${i + 1}`
+        ));
+        startMs = endMs + 1500 + ((i * 683) % 2200);
+    }
+
+    const merged = mergeSubtitlesByTime(mains, trans);
+    assert.equal(merged.length, 200);
+
+    let matched = 0;
+    let headMatched = 0;
+    for (let i = 0; i < merged.length; i++) {
+        if (merged[i].text === `<b>Main ${i + 1}</b>\n<i>> Trans ${i + 1}</i>`) {
+            matched++;
+            if (i < 30) headMatched++;
+        }
+    }
+    assert.ok(matched >= 190, `expected at least 190 PAL-drift matches, got ${matched}`);
+    assert.ok(headMatched >= 27, `expected the head of the file to align, got ${headMatched}/30`);
+}
+
 // Already-synced files must pass through the aligner untouched: every main
 // cue keeps exactly its own translation.
 {
