@@ -96,14 +96,16 @@ export const OPTIONAL_PROVIDERS = {
     mode: {
         key: 'optionalProviderMode',
         title: 'Optional providers mode',
-        options: ['Parallel (always query) [parallel]', 'Fallback (only if defaults empty) [fallback]'],
-        help: 'Parallel pools provider results with the defaults every time (best matches). Fallback only queries them when the built-in sources find nothing.'
+        options: ['Fallback (only if defaults empty) [fallback]', 'Parallel (always query) [parallel]'],
+        help: 'Fallback (default) only queries your provider keys when the built-in sources find nothing — saves API credit. Parallel pools provider results with the defaults every time for the best matches.'
     }
 } as const;
 
 function parseModeValue(raw: unknown): 'parallel' | 'fallback' {
+    // Default to fallback (only query provider keys when the defaults come up empty)
+    // to conserve the user's API credit; parallel must be chosen explicitly.
     const s = String(raw || '').toLowerCase();
-    return s.includes('fallback') ? 'fallback' : 'parallel';
+    return s.includes('parallel') ? 'parallel' : 'fallback';
 }
 
 // Pull the optional-provider settings out of the decoded config object.
