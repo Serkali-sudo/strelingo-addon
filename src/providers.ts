@@ -164,6 +164,15 @@ function extOf(name: string | undefined): string | undefined {
     return m ? m[1].toLowerCase() : undefined;
 }
 
+// Redact API keys carried in the query string (e.g. Wyzie's ?key=) before logging.
+function redactUrlForLog(url: string): string {
+    return url.replace(/([?&](?:key|api_key)=)[^&]+/gi, '$1***');
+}
+
+function logProviderUrl(provider: string, url: string): void {
+    console.log(`[${provider}] GET ${redactUrlForLog(url)}`);
+}
+
 // ---------------------------------------------------------------------------
 // Wyzie  (https://sub.wyzie.io/search) — returns direct, non-zip subtitle URLs.
 // ---------------------------------------------------------------------------
@@ -190,7 +199,9 @@ async function fetchWyzie(params: ProviderSearchParams, cfg: OptionalProviderCon
     }
     qs.set('key', cfg.wyzieKey);
 
-    const data = await fetchJson(`https://sub.wyzie.io/search?${qs.toString()}`);
+    const wyzieUrl = `https://sub.wyzie.io/search?${qs.toString()}`;
+    logProviderUrl('wyzie', wyzieUrl);
+    const data = await fetchJson(wyzieUrl);
     const items: any[] = Array.isArray(data) ? data : Array.isArray(data?.subtitles) ? data.subtitles : [];
 
     const out: ProviderSub[] = [];
@@ -235,10 +246,9 @@ async function subsourceMovieId(params: ProviderSearchParams, apiKey: string): P
     qs.set('type', params.type === 'series' ? 'series' : 'movie');
     if (params.type === 'series' && params.season) qs.set('season', params.season);
 
-    const data = await fetchJson(
-        `https://api.subsource.net/api/v1/movies/search?${qs.toString()}`,
-        { 'X-API-Key': apiKey }
-    );
+    const movieSearchUrl = `https://api.subsource.net/api/v1/movies/search?${qs.toString()}`;
+    logProviderUrl('subsource', movieSearchUrl);
+    const data = await fetchJson(movieSearchUrl, { 'X-API-Key': apiKey });
     const list: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
     if (list.length === 0) return null;
 
@@ -266,12 +276,12 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
         qs.set('limit', '30');
         qs.set('sort', 'popular');
 
+        const subtitlesUrl = `https://api.subsource.net/api/v1/subtitles?${qs.toString()}`;
+        logProviderUrl('subsource', subtitlesUrl);
+
         let data: any;
         try {
-            data = await fetchJson(
-                `https://api.subsource.net/api/v1/subtitles?${qs.toString()}`,
-                { 'X-API-Key': cfg.subsourceKey }
-            );
+            data = await fetchJson(subtitlesUrl, { 'X-API-Key': cfg.subsourceKey });
         } catch {
             continue;
         }
