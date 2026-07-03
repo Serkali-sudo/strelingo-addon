@@ -1506,6 +1506,8 @@ async function buildMergedSubtitleSrt(params: LazySubtitlePayload): Promise<stri
     const transParsed = parseSrt(transSubContent);
     if (!transParsed) throw new Error("Failed to parse translation subtitle");
 
+    console.log(`[serve] merging main=${params.mainUrl} trans=${params.transUrl}`);
+
     const mergedParsed = mergeSubtitles([...mainParsed], transParsed);
     if (!mergedParsed || mergedParsed.length === 0) throw new Error("Failed to merge subtitles");
 
