@@ -9,7 +9,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Buffer } from 'node:buffer';
 
-import { gunzipSync, unzipSync } from 'fflate';
+import { unzipSync } from 'fflate';
 
 import landingTemplate, { Manifest } from './landingTemplate';
 import { decodeSubtitleBuffer, getLanguageAliases } from './encoding';
@@ -24,7 +24,6 @@ import {
     type ProviderSub,
     type RequestedLang
 } from './providers';
-import { cloudscraperFetch } from './cloudscraper';
 import {
     mergeSubtitlesByTime,
     type SubtitleCandidate,
@@ -475,31 +474,12 @@ function resolveKitsuId(id: string): ResolvedVideoId | null {
     return resolved;
 }
 
-// Legacy OpenSubtitles REST search (rest.opensubtitles.org). Used as a key-less
-// default fallback: it returns a lot of subtitles, but its download links are
-// gzipped and Cloudflare-fronted — handled by cloudscraperFetch + gunzip at
-// download time in fetchSubtitleContent().
-const LEGACY_OPENSUBTITLES_API_URL = 'https://rest.opensubtitles.org';
-const DEFAULT_LEGACY_OPENSUBTITLES_USER_AGENT = 'TemporaryUserAgent';
-
-interface LegacyOpenSubtitlesSubtitle {
-    IDSubtitleFile?: string;
-    SubDownloadLink?: string;
-    SubFormat?: string;
-    MovieReleaseName?: string;
-    MovieName?: string;
-    SubRating?: string;
-    SubDownloadsCnt?: string;
-    SubLanguageID?: string;
-}
-
 // Fetch all subtitles using standard web fetch (axios-free)
 async function fetchAllSubtitles(
     baseSearchParams: { imdbid?: string; season?: string; episode?: string; butaId?: string },
     type: string,
     videoParams: { filename?: string; videoSize?: string; videoHash?: string } = {},
-    needsJapanese = false,
-    fallbackLanguageIds: string[] = []
+    needsJapanese = false
 ): Promise<any[] | null> {
     const promises: Array<Promise<any>> = [];
 
@@ -589,148 +569,16 @@ async function fetchAllSubtitles(
             allSubtitles = allSubtitles.concat(results[1].value.subtitles);
         }
 
-        // Legacy fallback: fill in any requested language the primary source missed.
-        let legacyCount = 0;
-        let legacyAttempted = false;
-        if (baseSearchParams.imdbid) {
-            const missing = getMissingSubtitleLanguageIds(allSubtitles, fallbackLanguageIds);
-            if (missing.length > 0) {
-                legacyAttempted = true;
-                console.log(`[legacy] filling missing language(s): ${missing.join(', ')}`);
-                const legacy = await fetchLegacyOpenSubtitlesFallback(baseSearchParams, type, missing);
-                legacyCount = legacy.length;
-                if (legacy.length > 0) allSubtitles = allSubtitles.concat(legacy);
-            }
-        }
-
         const parts = [`OpenSubtitles: ${osCount}`];
         if (needsJapanese) parts.push(`Buta-no-subs: ${butaCount}`);
-        if (legacyAttempted) parts.push(`OpenSubtitles-legacy: ${legacyCount}`);
         console.log(`[sources] ${parts.join(', ')}`);
 
         return allSubtitles.length > 0 ? allSubtitles : null;
 
     } catch (error: any) {
-        console.error('[sources] primary fetch failed:', error.message);
-        // Primary source died entirely — try the legacy REST API for all languages.
-        if (baseSearchParams.imdbid) {
-            const legacy = await fetchLegacyOpenSubtitlesFallback(baseSearchParams, type, fallbackLanguageIds);
-            if (legacy.length > 0) {
-                console.log(`[sources] OpenSubtitles-legacy: ${legacy.length} (primary failed)`);
-                return legacy;
-            }
-        }
+        console.error('[sources] fetch failed:', error.message);
         return null;
     }
-}
-
-function getMissingSubtitleLanguageIds(allSubtitles: any[], requestedLanguageIds: string[]): string[] {
-    return requestedLanguageIds.filter(languageId => {
-        const aliases = getLanguageAliases(languageId);
-        return !allSubtitles.some(subtitle => aliases.includes(subtitle.lang));
-    });
-}
-
-async function fetchLegacyOpenSubtitlesFallback(
-    baseSearchParams: { imdbid?: string; season?: string; episode?: string },
-    type: string,
-    languageIds: string[]
-): Promise<any[]> {
-    if (!baseSearchParams.imdbid) return [];
-    const uniqueLanguageIds = [...new Set(languageIds.flatMap(lang => getLanguageAliases(lang)).filter(Boolean))];
-    if (uniqueLanguageIds.length === 0) return [];
-
-    const requests = uniqueLanguageIds.map(async (languageId) => {
-        const searchParams: Record<string, string> = {
-            imdbid: baseSearchParams.imdbid!,
-            sublanguageid: languageId
-        };
-
-        if (type === 'series') {
-            if (baseSearchParams.season) searchParams.season = baseSearchParams.season;
-            if (baseSearchParams.episode) searchParams.episode = baseSearchParams.episode;
-        }
-
-        const searchUrl = buildLegacyOpenSubtitlesSearchUrl(searchParams);
-        console.log(`[legacy] GET ${searchUrl}`);
-
-        try {
-            const response = await fetch(searchUrl, {
-                headers: {
-                    'User-Agent': getEnvVar({}, 'OPENSUBTITLES_USER_AGENT') || DEFAULT_LEGACY_OPENSUBTITLES_USER_AGENT,
-                    'Accept': 'application/json'
-                },
-                signal: AbortSignal.timeout(10000)
-            });
-
-            if (!response.ok) {
-                console.warn(`[legacy] ${languageId}: HTTP ${response.status}`);
-                return [];
-            }
-
-            const payload = await response.json() as unknown;
-            if (!Array.isArray(payload)) {
-                console.warn(`[legacy] ${languageId}: non-array response`);
-                return [];
-            }
-
-            const mapped = payload
-                .filter(isLegacyOpenSubtitlesSubtitle)
-                .filter(subtitle => {
-                    const format = subtitle.SubFormat?.toLowerCase();
-                    return Boolean(subtitle.SubDownloadLink && format && SUPPORTED_SUBTITLE_FORMATS.has(format));
-                })
-                .map(subtitle => mapLegacyOpenSubtitlesSubtitle(subtitle, languageId));
-            console.log(`[legacy] ${languageId}: ${payload.length} raw, ${mapped.length} usable`);
-            return mapped;
-        } catch (error: any) {
-            console.warn(`[legacy] ${languageId} failed: ${error.message}`);
-            return [];
-        }
-    });
-
-    const results = await Promise.all(requests);
-    return results.flat();
-}
-
-function buildLegacyOpenSubtitlesSearchUrl(params: Record<string, string>): string {
-    const orderedParams: Array<[string, string]> = params.episode
-        ? [
-            ['episode', params.episode],
-            ['imdbid', params.imdbid],
-            ...(params.season ? [['season', params.season] as [string, string]] : []),
-            ['sublanguageid', params.sublanguageid]
-        ]
-        : Object.entries(params);
-
-    const searchPath = orderedParams
-        .map(([key, value]) => `${key}-${encodeLegacyOpenSubtitlesPathValue(value)}`)
-        .join('/');
-
-    return `${LEGACY_OPENSUBTITLES_API_URL}/search/${searchPath}`;
-}
-
-function encodeLegacyOpenSubtitlesPathValue(value: string): string {
-    return encodeURIComponent(value).replace(/%2F/gi, '');
-}
-
-function mapLegacyOpenSubtitlesSubtitle(subtitle: LegacyOpenSubtitlesSubtitle, languageId: string): any {
-    const downloadCount = parseInt(subtitle.SubDownloadsCnt || '0', 10) || 0;
-    const rating = Number.parseFloat(subtitle.SubRating || '0') || 0;
-
-    return {
-        id: subtitle.IDSubtitleFile || `legacy-${crypto.randomUUID()}`,
-        url: subtitle.SubDownloadLink,
-        lang: subtitle.SubLanguageID || languageId,
-        format: subtitle.SubFormat || 'srt',
-        releaseName: subtitle.MovieReleaseName || subtitle.MovieName || 'OpenSubtitles',
-        rating,
-        g: Math.round(rating * 1000) + downloadCount
-    };
-}
-
-function isLegacyOpenSubtitlesSubtitle(value: unknown): value is LegacyOpenSubtitlesSubtitle {
-    return Boolean(value && typeof value === 'object');
 }
 
 function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: string): SubtitleInfo[] | null {
@@ -765,11 +613,6 @@ function filterSubtitlesByLanguage(allSubtitles: any[] | null, languageId: strin
 }
 
 const SUBTITLE_EXT_PRIORITY = ['srt', 'ass', 'ssa', 'vtt', 'sub', 'sbv', 'smi', 'lrc', 'ttml', 'dfxp'];
-
-function isGzipBuffer(buffer: Buffer): boolean {
-    // gzip magic: 1F 8B. Legacy OpenSubtitles download links serve gzipped files.
-    return buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
-}
 
 function isZipBuffer(buffer: Buffer): boolean {
     // ZIP local-file / central-dir / end-of-central-dir magic: 'PK' + (03 04 | 05 06 | 07 08)
@@ -842,38 +685,14 @@ async function fetchSubtitleContent(
     }
 
     try {
-        // Legacy OpenSubtitles download links (dl.opensubtitles.org) authorize by
-        // API user-agent, not browser headers — using the browser UA yields 401.
-        // So match the search's user-agent for those, and use the browser-mimicking
-        // fetch for everything else (which needs to clear Cloudflare).
-        const isLegacyOpenSubtitles = /(^|\.)opensubtitles\.org$/i.test(new URL(url).hostname);
-        const response = isLegacyOpenSubtitles
-            ? await fetch(url, {
-                headers: {
-                    'User-Agent': getEnvVar({}, 'OPENSUBTITLES_USER_AGENT') || DEFAULT_LEGACY_OPENSUBTITLES_USER_AGENT,
-                    'Accept': '*/*',
-                    ...options.headers
-                },
-                signal: AbortSignal.timeout(15000)
-            })
-            : await cloudscraperFetch(url, {
-                headers: options.headers,
-                signal: AbortSignal.timeout(15000)
-            });
+        const response = await fetch(url, {
+            headers: options.headers,
+            signal: AbortSignal.timeout(15000)
+        });
         if (!response.ok) throw new Error(`fetch responded with ${response.status}`);
 
         const arrayBuffer = await response.arrayBuffer();
         let buffer = Buffer.from(arrayBuffer);
-
-        // Legacy OpenSubtitles serves gzipped subtitle files; decompress first.
-        if (isGzipBuffer(buffer)) {
-            try {
-                buffer = Buffer.from(gunzipSync(new Uint8Array(buffer)));
-            } catch (e: any) {
-                console.warn('[content] gunzip failed:', e.message);
-                return null;
-            }
-        }
 
         // Some providers deliver zipped subtitles; extract the right file before decoding.
         if (isZipBuffer(buffer)) {
@@ -1801,12 +1620,9 @@ async function handleSubtitlesRequest(c: any) {
     try {
         const needsJapanese = mainLang === 'jpn' || transLang === 'jpn';
 
-        // Built-in OpenSubtitles/Buta-no-subs results (+ legacy OpenSubtitles REST
-        // fallback for any main/translation language the primary source missed);
-        // null (error/none) is treated as empty so optional providers can still
-        // satisfy the request on their own.
-        const fallbackLanguageIds = [mainLang, transLang].filter((lang): lang is string => Boolean(lang));
-        let allSubtitles: any[] = (await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese, fallbackLanguageIds)) || [];
+        // Built-in OpenSubtitles/Buta-no-subs results; null (error/none) is treated
+        // as empty so optional providers can still satisfy the request on their own.
+        let allSubtitles: any[] = (await fetchAllSubtitles(baseSearchParams, type, videoParams, needsJapanese)) || [];
 
         // Optional, API-key providers (Wyzie / SubSource). Lazily resolves
         // the requested languages into the per-provider forms only when needed.

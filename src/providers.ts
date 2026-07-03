@@ -1,5 +1,4 @@
 import { normalizeLanguageCode } from './encoding';
-import { cloudscraperFetch, describeCloudflareBlock } from './cloudscraper';
 
 // ---------------------------------------------------------------------------
 // Optional, API-key-gated subtitle providers (Wyzie, SubSource).
@@ -16,10 +15,6 @@ import { cloudscraperFetch, describeCloudflareBlock } from './cloudscraper';
 
 const PROVIDER_TIMEOUT_MS = 12000;
 const MAX_RESULTS_PER_PROVIDER = 20;
-
-// Some provider hosts sit behind Cloudflare, whose WAF 403s requests that don't
-// look like a real browser. All provider HTTP traffic goes through
-// cloudscraperFetch(), which supplies a rotating browser header profile.
 
 // A resolved language the caller wants, in the three forms the providers need.
 export interface RequestedLang {
@@ -151,21 +146,12 @@ export async function resolveRequestedLangs(
 }
 
 async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<any> {
-    // cloudscraperFetch supplies the rotating browser header profile; we only add
-    // caller-specific headers (e.g. SubSource's X-API-Key).
-    const res = await cloudscraperFetch(url, {
-        headers,
+    const res = await fetch(url, {
+        headers: { 'Accept': 'application/json', ...headers },
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS)
     });
     if (!res.ok) {
-        // Surface *what kind* of block this is so we know if it's bypassable.
-        let detail = '';
-        try {
-            const body = await res.text();
-            const kind = describeCloudflareBlock(res.status, body);
-            if (kind) detail = ` [Cloudflare: ${kind}]`;
-        } catch { /* ignore body read errors */ }
-        throw new Error(`${url} responded with ${res.status}${detail}`);
+        throw new Error(`${url} responded with ${res.status}`);
     }
     return await res.json();
 }
