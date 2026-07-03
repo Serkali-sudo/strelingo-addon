@@ -132,11 +132,13 @@ const WIDE_SEARCH_WINDOW_MS = 60000;
 const INITIAL_SEARCH_WINDOW_MS = 120000;
 const MIN_INITIAL_LOCK_PAIRS = 4;
 const MIN_INITIAL_LOCK_RATIO = 0.8;
-// Reconciling the forward and backward tracking passes: anchors within this
-// are the same estimate; on a dispute, the stronger cluster wins only if it
-// clearly dominates, otherwise the segment is dropped.
-const ANCHOR_AGREEMENT_MS = 2000;
-const ANCHOR_DISPUTE_DOMINANCE = 1.25;
+// Global robust line fit over the tracked anchors: when at least this share
+// of anchors follows one offset line (a constant offset, or fps drift), the
+// line becomes the backbone — outlier anchors are discarded and every segment
+// is re-estimated in a narrow window around the line's prediction.
+const MIN_LINE_INLIER_RATIO = 0.7;
+const LINE_REFINE_WINDOW_MS = 6000;
+const MAX_DRIFT_SLOPE = 0.1;
 // Width of the densest start-delta cluster taken as a segment's true offset.
 const CLUSTER_WINDOW_MS = 1500;
 const MIN_SEGMENT_PAIRS = 3;
@@ -373,11 +375,13 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
     return mergedSubs;
 }
 
-// Estimates how the translation timeline maps onto the main timeline by
-// tracking the start-time offset segment by segment. Each segment finds the
-// densest cluster of pairwise start deltas near the previous segment's offset,
-// so the estimate follows constant shifts, linear fps drift and step changes
-// without any global assumption. Cost is O(samples * candidates-per-window).
+// Estimates how the translation timeline maps onto the main timeline.
+// A tracking pass estimates the start-time offset segment by segment; a
+// global robust line fit over those anchors then separates the dominant
+// pattern (constant offset or fps drift) from mis-locked segments, which are
+// re-estimated around the line. Files whose anchors do not form a line (e.g.
+// step offsets from an edited cut) keep the tracked anchors piecewise.
+// Cost is O(samples * candidates-per-window) — trivial next to the download.
 function estimateAlignmentAnchors<T extends SubtitleCue>(
     mainTimed: Array<TimedCue<T>>,
     transTimed: Array<TimedCue<T>>
@@ -394,33 +398,38 @@ function estimateAlignmentAnchors<T extends SubtitleCue>(
         });
     }
 
-    const forwardOrder = bounds.map((_, i) => i);
-    const forward = trackSegments(mainTimed, transTimed, transStarts, bounds, forwardOrder, 0, false);
+    const tracked = trackSegments(mainTimed, transTimed, transStarts, bounds);
+    if (tracked.length < 4) return filterAnchorSpikes(tracked);
 
-    // Second pass in reverse, seeded from the forward tail. It heals segments
-    // the forward pass mis-locked while it was still converging on the true
-    // offset, and regions beyond a jump the forward pass could not follow.
-    const backwardOrder = [...forwardOrder].reverse();
-    const seedOffsetMs = forward.length > 0 ? forward[forward.length - 1].offsetMs : 0;
-    const backward = trackSegments(mainTimed, transTimed, transStarts, bounds, backwardOrder, seedOffsetMs, forward.length > 0);
+    // Most real-world sync problems are one line: a constant offset, or fps
+    // drift (a·t + b). When the tracked anchors agree on a line, trust it as
+    // the backbone: drop mis-locked anchors and re-estimate every segment
+    // near the line, instead of letting one bad anchor warp its region.
+    const line = fitRobustLine(tracked);
+    if (line) {
+        const inliers = tracked.filter(anchor =>
+            Math.abs(anchor.offsetMs - (line.slope * anchor.mainMs + line.interceptMs)) <= ANCHOR_SPIKE_MS);
+        if (inliers.length >= Math.max(4, Math.ceil(tracked.length * MIN_LINE_INLIER_RATIO))) {
+            return refineAnchorsAlongLine(mainTimed, transTimed, transStarts, bounds, line);
+        }
+    }
 
-    return filterAnchorSpikes(reconcileAnchors(forward, backward));
+    // No single line (e.g. step offsets from an edited cut): keep the tracked
+    // anchors, minus any that stray from their neighbourhood.
+    return filterAnchorSpikes(tracked);
 }
 
 function trackSegments<T extends SubtitleCue>(
     mainTimed: Array<TimedCue<T>>,
     transTimed: Array<TimedCue<T>>,
     transStarts: number[],
-    bounds: Array<{ from: number; to: number }>,
-    order: number[],
-    seedOffsetMs: number,
-    seedLocked: boolean
+    bounds: Array<{ from: number; to: number }>
 ): AlignmentAnchor[] {
     const anchors: AlignmentAnchor[] = [];
-    let prevOffsetMs = seedOffsetMs;
-    let locked = seedLocked;
+    let prevOffsetMs = 0;
+    let locked = false;
 
-    for (const s of order) {
+    for (let s = 0; s < bounds.length; s++) {
         const { from, to } = bounds[s];
         let anchor: AlignmentAnchor | null;
         if (locked) {
@@ -443,27 +452,63 @@ function trackSegments<T extends SubtitleCue>(
     return anchors;
 }
 
-// Merge the two tracking passes: agreeing anchors keep the stronger estimate,
-// disputes go to the clearly denser cluster, and ambiguous segments are
-// dropped so their neighbours interpolate across them.
-function reconcileAnchors(forward: AlignmentAnchor[], backward: AlignmentAnchor[]): AlignmentAnchor[] {
-    const bySegment = new Map<number, AlignmentAnchor>();
-    for (const anchor of forward) bySegment.set(anchor.segmentIndex, anchor);
+interface OffsetLine {
+    slope: number;
+    interceptMs: number;
+}
 
-    for (const candidate of backward) {
-        const existing = bySegment.get(candidate.segmentIndex);
-        if (!existing) {
-            bySegment.set(candidate.segmentIndex, candidate);
-        } else if (Math.abs(existing.offsetMs - candidate.offsetMs) <= ANCHOR_AGREEMENT_MS) {
-            if (candidate.pairCount > existing.pairCount) bySegment.set(candidate.segmentIndex, candidate);
-        } else if (candidate.pairCount >= existing.pairCount * ANCHOR_DISPUTE_DOMINANCE) {
-            bySegment.set(candidate.segmentIndex, candidate);
-        } else if (existing.pairCount < candidate.pairCount * ANCHOR_DISPUTE_DOMINANCE) {
-            bySegment.delete(candidate.segmentIndex);
+// Theil–Sen estimator over the anchors: median of pairwise slopes, then
+// median intercept. Robust to a minority of mis-locked anchors.
+function fitRobustLine(anchors: AlignmentAnchor[]): OffsetLine | null {
+    const slopes: number[] = [];
+    for (let i = 0; i < anchors.length; i++) {
+        for (let j = i + 1; j < anchors.length; j++) {
+            const spanMs = anchors[j].mainMs - anchors[i].mainMs;
+            if (spanMs !== 0) slopes.push((anchors[j].offsetMs - anchors[i].offsetMs) / spanMs);
+        }
+    }
+    if (slopes.length === 0) return null;
+
+    const slope = median(slopes);
+    if (Math.abs(slope) > MAX_DRIFT_SLOPE) return null;
+
+    const interceptMs = median(anchors.map(anchor => anchor.offsetMs - slope * anchor.mainMs));
+    return { slope, interceptMs };
+}
+
+// Re-estimates every segment in a narrow window centred on the fitted line.
+// This corrects segments that first locked onto an off-by-one-cue cluster and
+// recovers segments that produced no usable anchor at all.
+function refineAnchorsAlongLine<T extends SubtitleCue>(
+    mainTimed: Array<TimedCue<T>>,
+    transTimed: Array<TimedCue<T>>,
+    transStarts: number[],
+    bounds: Array<{ from: number; to: number }>,
+    line: OffsetLine
+): AlignmentAnchor[] {
+    const refined: AlignmentAnchor[] = [];
+
+    for (let s = 0; s < bounds.length; s++) {
+        const { from, to } = bounds[s];
+        if (to <= from) continue;
+        const midMainMs = mainTimed[Math.min(mainTimed.length - 1, Math.floor((from + to) / 2))].startMs;
+        const predictedMs = line.slope * midMainMs + line.interceptMs;
+        const anchor = estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, predictedMs, LINE_REFINE_WINDOW_MS, s);
+        if (anchor && Math.abs(anchor.offsetMs - (line.slope * anchor.mainMs + line.interceptMs)) <= ANCHOR_SPIKE_MS) {
+            refined.push(anchor);
         }
     }
 
-    return [...bySegment.values()].sort((a, b) => a.mainMs - b.mainMs);
+    if (refined.length >= 3) return enforceMonotonicAnchors(refined);
+
+    // Too few local confirmations: apply the line itself across the whole span.
+    const lineAnchor = (mainMs: number): AlignmentAnchor => {
+        const offsetMs = line.slope * mainMs + line.interceptMs;
+        return { mainMs, transMs: mainMs + offsetMs, offsetMs, pairCount: 0, pairRatio: 0, segmentIndex: -1 };
+    };
+    const firstMs = mainTimed[0].startMs;
+    const lastMs = mainTimed[mainTimed.length - 1].startMs;
+    return enforceMonotonicAnchors(lastMs > firstMs ? [lineAnchor(firstMs), lineAnchor(lastMs)] : [lineAnchor(firstMs)]);
 }
 
 function estimateSegmentOffset<T extends SubtitleCue>(
