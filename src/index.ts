@@ -842,10 +842,24 @@ async function fetchSubtitleContent(
     }
 
     try {
-        const response = await cloudscraperFetch(url, {
-            headers: options.headers,
-            signal: AbortSignal.timeout(15000)
-        });
+        // Legacy OpenSubtitles download links (dl.opensubtitles.org) authorize by
+        // API user-agent, not browser headers — using the browser UA yields 401.
+        // So match the search's user-agent for those, and use the browser-mimicking
+        // fetch for everything else (which needs to clear Cloudflare).
+        const isLegacyOpenSubtitles = /(^|\.)opensubtitles\.org$/i.test(new URL(url).hostname);
+        const response = isLegacyOpenSubtitles
+            ? await fetch(url, {
+                headers: {
+                    'User-Agent': getEnvVar({}, 'OPENSUBTITLES_USER_AGENT') || DEFAULT_LEGACY_OPENSUBTITLES_USER_AGENT,
+                    'Accept': '*/*',
+                    ...options.headers
+                },
+                signal: AbortSignal.timeout(15000)
+            })
+            : await cloudscraperFetch(url, {
+                headers: options.headers,
+                signal: AbortSignal.timeout(15000)
+            });
         if (!response.ok) throw new Error(`fetch responded with ${response.status}`);
 
         const arrayBuffer = await response.arrayBuffer();
