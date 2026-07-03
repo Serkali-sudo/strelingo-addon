@@ -134,7 +134,8 @@ const toSrtTime = (ms) => {
     assert.equal(merged[1].text, '<b>Second main</b>\n<i>> Segunda</i>');
 }
 
-// A translation cue that genuinely spans two main cues still shows on both.
+// A translation cue that genuinely spans two short main cues combines them
+// into a single entry covering both, instead of repeating the translation.
 {
     const merged = mergeSubtitlesByTime(
         [
@@ -144,8 +145,52 @@ const toSrtTime = (ms) => {
         [cue('1', '00:00:10,000', '00:00:14,000', 'Ambos')]
     );
 
-    assert.equal(merged[0].text, '<b>One</b>\n<i>> Ambos</i>');
-    assert.equal(merged[1].text, '<b>Two</b>\n<i>> Ambos</i>');
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].text, '<b>One Two</b>\n<i>> Ambos</i>');
+    assert.equal(merged[0].startTime, '00:00:10,000');
+    assert.equal(merged[0].endTime, '00:00:14,000');
+}
+
+// Same, with realistic split dialogue: the two halves of the main sentence
+// are joined and the shared translation appears once.
+{
+    const merged = mergeSubtitlesByTime(
+        [
+            cue('1', '00:00:02,319', '00:00:03,796', '-Yeah, exactly. -I asked you guys not to come'),
+            cue('2', '00:00:03,820', '00:00:05,222', 'to trivia for one night.'),
+            cue('3', '00:00:05,256', '00:00:06,991', 'You can\'t ask her out at trivia, Bear.')
+        ],
+        [
+            cue('1', '00:00:02,300', '00:00:05,200', '- Kesinlikle. - Bir kez olsun gelmeyin dedim.'),
+            cue('2', '00:00:05,300', '00:00:06,900', 'Çıkma teklif edemezsin Bear.')
+        ]
+    );
+
+    assert.equal(merged.length, 2);
+    assert.equal(
+        merged[0].text,
+        '<b>-Yeah, exactly. -I asked you guys not to come to trivia for one night.</b>\n<i>> - Kesinlikle. - Bir kez olsun gelmeyin dedim.</i>'
+    );
+    assert.equal(merged[0].endTime, '00:00:05,222');
+    assert.equal(merged[1].text, '<b>You can\'t ask her out at trivia, Bear.</b>\n<i>> Çıkma teklif edemezsin Bear.</i>');
+}
+
+// When the joined main text would get too long, the cues stay separate and
+// the translation is repeated instead.
+{
+    const longA = 'This is a very long first main subtitle line that just keeps going on and on';
+    const longB = 'and this second line also has quite a lot of text in it as well, truly';
+    const merged = mergeSubtitlesByTime(
+        [
+            cue('1', '00:00:10,000', '00:00:12,000', longA),
+            cue('2', '00:00:12,100', '00:00:14,000', longB)
+        ],
+        [cue('1', '00:00:10,000', '00:00:14,000', 'Uzun bir çeviri')]
+    );
+
+    assert.equal(merged.length, 2);
+    assert.equal(merged[0].text, `<b>${longA}</b>\n<i>> Uzun bir çeviri</i>`);
+    assert.equal(merged[1].text, `<b>${longB}</b>\n<i>> Uzun bir çeviri</i>`);
 }
 
 // Consecutive identical translation lines are collapsed within one entry.

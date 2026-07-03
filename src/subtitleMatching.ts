@@ -149,6 +149,12 @@ const MIN_BLOCK_LOSS_ALLOWANCE = 2;
 // A translation cue owned by a neighbouring main cue is repeated here only
 // when it also covers at least this fraction of this main cue.
 const SPANNING_COVERAGE_RATIO = 0.5;
+// Consecutive main cues that share the same single translation cue are
+// combined into one entry (instead of repeating the translation), as long as
+// the joined main text stays short and the cues are adjacent on screen.
+const MERGED_MAIN_MAX_CHARS = 90;
+const MERGED_MAIN_MAX_GAP_MS = 1500;
+const MERGED_MAIN_MAX_DURATION_MS = 8000;
 
 const STANDALONE_SDH_LINE_PATTERN = /^\s*(?:-\s*)?[\[(][^\])]+[\])]\s*$/;
 const ANNOTATION_PATTERN = /[\[(][^\])]*[\])]/g;
@@ -257,9 +263,11 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
         windowEnd[mi] = i;
     }
 
-    // Pass 2: build the merged text. A main cue takes the translation cues it
-    // owns (plus any cue that genuinely spans it), and falls back to the best
-    // nearby cue when it owns none.
+    // Pass 2: pick the translation cues for each main cue. A main cue takes
+    // the translation cues it owns (plus any cue that genuinely spans it),
+    // and falls back to the best nearby cue when it owns none.
+    const pickedTranslations: Array<Array<TimedCue<T>>> = new Array(mainTimed.length);
+
     for (let mi = 0; mi < mainTimed.length; mi++) {
         const mainCue = mainTimed[mi];
         const chosenTranslations: Array<TimedCue<T>> = [];
@@ -291,13 +299,42 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
             }
         }
 
-        const picked = chosenTranslations.length > 0
+        pickedTranslations[mi] = chosenTranslations.length > 0
             ? chosenTranslations
             : fallback
                 ? [fallback.cue]
                 : [];
+    }
 
-        let mergedText = mainCue.text;
+    // Pass 3: emit the entries. When consecutive main cues share the same
+    // single translation cue (one translation spanning a split main line),
+    // combine them into one entry instead of repeating the translation —
+    // as long as the joined line stays short and the cues sit close together.
+    for (let mi = 0; mi < mainTimed.length;) {
+        const picked = pickedTranslations[mi];
+        let last = mi;
+
+        if (picked.length === 1) {
+            const sharedCue = picked[0];
+            let joinedLength = mainTimed[mi].text.length;
+            while (last + 1 < mainTimed.length) {
+                const nextPicked = pickedTranslations[last + 1];
+                if (nextPicked.length !== 1 || nextPicked[0] !== sharedCue) break;
+                const nextMain = mainTimed[last + 1];
+                if (nextMain.startMs - mainTimed[last].endMs > MERGED_MAIN_MAX_GAP_MS) break;
+                if (nextMain.endMs - mainTimed[mi].startMs > MERGED_MAIN_MAX_DURATION_MS) break;
+                const nextLength = joinedLength + 1 + nextMain.text.length;
+                if (nextLength > MERGED_MAIN_MAX_CHARS) break;
+                joinedLength = nextLength;
+                last++;
+            }
+        }
+
+        const mainText = last === mi
+            ? mainTimed[mi].text
+            : mainTimed.slice(mi, last + 1).map(cue => cue.text).join(' ');
+
+        let mergedText = mainText;
         if (picked.length > 0) {
             const parts: string[] = [];
             for (const translation of picked) {
@@ -307,15 +344,16 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
             }
             const translationText = parts.join(' ');
             if (translationText) {
-                mergedText = (`<b>${mainCue.text}</b>\n<i>> ${translationText}</i>`).trim();
+                mergedText = (`<b>${mainText}</b>\n<i>> ${translationText}</i>`).trim();
             }
         }
 
-        if (!mergedText) continue;
-        mergedSubs.push({
-            ...mainCue.cue,
-            text: mergedText
-        });
+        if (mergedText) {
+            mergedSubs.push(last > mi
+                ? { ...mainTimed[mi].cue, endTime: mainTimed[last].cue.endTime, text: mergedText }
+                : { ...mainTimed[mi].cue, text: mergedText });
+        }
+        mi = last + 1;
     }
 
     return mergedSubs;
