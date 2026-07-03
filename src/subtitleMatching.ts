@@ -145,9 +145,9 @@ const MIN_SEGMENT_PAIR_RATIO = 0.3;
 const MIN_APPLY_OFFSET_MS = 350;
 // If every segment offset agrees within this, a single constant shift is used.
 const CONSTANT_OFFSET_TOLERANCE_MS = 400;
-// A segment offset this far from two agreeing neighbours is discarded as noise.
-const ANCHOR_SPIKE_MS = 4000;
-const ANCHOR_NEIGHBOR_AGREEMENT_MS = 1500;
+// An anchor deviating this far from the line through its neighbours is
+// discarded as noise (genuine anchors follow drift lines almost exactly).
+const ANCHOR_SPIKE_MS = 2500;
 // Offset changes between adjacent anchors up to this are treated as gradual
 // drift and interpolated; larger jumps are step changes (edited-out breaks)
 // and switch at the midpoint instead of smearing across the whole span.
@@ -480,13 +480,13 @@ function estimateSegmentOffset<T extends SubtitleCue>(
     if (segmentLength <= 0) return null;
 
     const sampleCount = Math.min(MAX_SEGMENT_SAMPLES, segmentLength);
-    const perCue: Array<{ mainMs: number; deltas: number[] }> = [];
-    const allDeltas: number[] = [];
+    const perCue: Array<{ mainMs: number; deltas: Array<{ deltaMs: number; weight: number }> }> = [];
+    const allDeltas: Array<{ deltaMs: number; weight: number }> = [];
 
     for (let i = 0; i < sampleCount; i++) {
         const mainCue = mainTimed[from + Math.floor(i * segmentLength / sampleCount)];
         const firstIndex = lowerBound(transStarts, mainCue.startMs + centerOffsetMs - searchWindowMs);
-        const deltas: number[] = [];
+        const deltas: Array<{ deltaMs: number; weight: number }> = [];
 
         for (let j = firstIndex; j < transTimed.length; j++) {
             const transCue = transTimed[j];
@@ -495,7 +495,7 @@ function estimateSegmentOffset<T extends SubtitleCue>(
             const durationRatio = Math.min(mainCue.durationMs, transCue.durationMs) / Math.max(mainCue.durationMs, transCue.durationMs);
             if (durationRatio < 0.25) continue;
 
-            deltas.push(transCue.startMs - mainCue.startMs);
+            deltas.push({ deltaMs: transCue.startMs - mainCue.startMs, weight: durationRatio });
         }
 
         if (deltas.length > 0) {
@@ -506,38 +506,46 @@ function estimateSegmentOffset<T extends SubtitleCue>(
 
     if (perCue.length < MIN_SEGMENT_PAIRS) return null;
 
-    // The true offset shows up as the densest cluster of deltas: every cue
-    // with a genuine counterpart contributes one delta there, while deltas to
-    // unrelated neighbouring cues spread out.
-    allDeltas.sort((a, b) => a - b);
+    // The true offset shows up as the heaviest cluster of deltas. Weighting by
+    // duration similarity separates it from off-by-one-cue rival clusters:
+    // genuine pairs have near-identical durations, accidental ones do not.
+    allDeltas.sort((a, b) => a.deltaMs - b.deltaMs);
     let clusterStart = 0;
-    let clusterCount = 0;
-    for (let hi = 0, lo = 0; hi < allDeltas.length; hi++) {
-        while (allDeltas[hi] - allDeltas[lo] > CLUSTER_WINDOW_MS) lo++;
-        if (hi - lo + 1 > clusterCount) {
-            clusterCount = hi - lo + 1;
+    let clusterWeight = 0;
+    for (let hi = 0, lo = 0, windowWeight = 0; hi < allDeltas.length; hi++) {
+        windowWeight += allDeltas[hi].weight;
+        while (allDeltas[hi].deltaMs - allDeltas[lo].deltaMs > CLUSTER_WINDOW_MS) {
+            windowWeight -= allDeltas[lo].weight;
+            lo++;
+        }
+        if (windowWeight > clusterWeight) {
+            clusterWeight = windowWeight;
             clusterStart = lo;
         }
     }
-    const clusterLo = allDeltas[clusterStart];
+    const clusterLo = allDeltas[clusterStart].deltaMs;
     const clusterHi = clusterLo + CLUSTER_WINDOW_MS;
     const clusterCenter = clusterLo + CLUSTER_WINDOW_MS / 2;
 
     // At most one refined pair per sampled cue, so a burst of nearby cues
-    // cannot outvote the rest of the segment.
+    // cannot outvote the rest of the segment. Prefer duration-similar
+    // candidates, with proximity to the cluster centre as a light tiebreak.
     const pairMainMs: number[] = [];
     const pairDeltas: number[] = [];
     for (const { mainMs, deltas } of perCue) {
-        let best: number | null = null;
-        for (const delta of deltas) {
-            if (delta < clusterLo || delta > clusterHi) continue;
-            if (best === null || Math.abs(delta - clusterCenter) < Math.abs(best - clusterCenter)) {
-                best = delta;
+        let best: { deltaMs: number; weight: number } | null = null;
+        let bestScore = -Infinity;
+        for (const candidate of deltas) {
+            if (candidate.deltaMs < clusterLo || candidate.deltaMs > clusterHi) continue;
+            const score = candidate.weight - 0.3 * Math.abs(candidate.deltaMs - clusterCenter) / CLUSTER_WINDOW_MS;
+            if (score > bestScore) {
+                bestScore = score;
+                best = candidate;
             }
         }
         if (best !== null) {
             pairMainMs.push(mainMs);
-            pairDeltas.push(best);
+            pairDeltas.push(best.deltaMs);
         }
     }
 
@@ -557,18 +565,36 @@ function estimateSegmentOffset<T extends SubtitleCue>(
     };
 }
 
+// Drops anchors that stray from the line through their neighbours. Genuine
+// anchors follow the drift line almost exactly, so a deviating one is a
+// mis-locked segment (an off-by-one-cue cluster, or rhythm noise). Edge
+// anchors are checked against the extrapolation of the two nearest ones.
 function filterAnchorSpikes(anchors: AlignmentAnchor[]): AlignmentAnchor[] {
     if (anchors.length < 3) return enforceMonotonicAnchors(anchors);
 
-    const kept = anchors.filter((anchor, i) => {
-        if (i === 0 || i === anchors.length - 1) return true;
-        const prev = anchors[i - 1];
-        const next = anchors[i + 1];
-        const neighborsAgree = Math.abs(prev.offsetMs - next.offsetMs) <= ANCHOR_NEIGHBOR_AGREEMENT_MS;
-        const isSpike = Math.abs(anchor.offsetMs - prev.offsetMs) > ANCHOR_SPIKE_MS
-            && Math.abs(anchor.offsetMs - next.offsetMs) > ANCHOR_SPIKE_MS;
-        return !(neighborsAgree && isSpike);
-    });
+    const kept: AlignmentAnchor[] = [];
+    for (let i = 0; i < anchors.length; i++) {
+        const anchor = anchors[i];
+        let a: AlignmentAnchor;
+        let b: AlignmentAnchor;
+        if (i === 0) {
+            a = anchors[1];
+            b = anchors[2];
+        } else if (i === anchors.length - 1) {
+            a = anchors[i - 2];
+            b = anchors[i - 1];
+        } else {
+            a = anchors[i - 1];
+            b = anchors[i + 1];
+        }
+        const spanMs = b.mainMs - a.mainMs;
+        const expectedOffsetMs = spanMs === 0
+            ? a.offsetMs
+            : a.offsetMs + (anchor.mainMs - a.mainMs) / spanMs * (b.offsetMs - a.offsetMs);
+        if (Math.abs(anchor.offsetMs - expectedOffsetMs) <= ANCHOR_SPIKE_MS) {
+            kept.push(anchor);
+        }
+    }
 
     return enforceMonotonicAnchors(kept);
 }
@@ -600,11 +626,15 @@ function alignTransCues<T extends SubtitleCue>(
     }
 
     // Piecewise warp between anchors (extrapolated at the edges). This covers
-    // both fps drift (anchors along a line) and step offsets.
+    // both fps drift (anchors along a line) and step offsets. A cue whose ends
+    // map across a step would balloon over the timeline and soak up matches
+    // from dozens of main cues, so warped durations are kept near the original.
     const warped = transTimed.map(cue => {
         const startMs = mapTransToMainTime(cue.startMs, anchors);
         let endMs = mapTransToMainTime(cue.endMs, anchors);
-        if (endMs <= startMs) endMs = startMs + cue.durationMs;
+        if (endMs <= startMs || endMs > startMs + cue.durationMs * 1.5) {
+            endMs = startMs + cue.durationMs;
+        }
         return {
             ...cue,
             startMs,
