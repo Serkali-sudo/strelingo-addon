@@ -139,16 +139,18 @@ const ANCHOR_NEIGHBOR_AGREEMENT_MS = 1500;
 // drift and interpolated; larger jumps are step changes (edited-out breaks)
 // and switch at the midpoint instead of smearing across the whole span.
 const DRIFT_RAMP_MAX_MS = 5000;
-// An estimated alignment is applied when cues land squarely on counterparts:
-// total overlap must improve by this factor. (Matched-cue counts can't be the
-// primary signal — in dense dialogue a badly offset timeline still "matches"
-// nearly every cue, just to the wrong neighbour.)
-const ALIGNMENT_OVERLAP_IMPROVEMENT = 1.05;
-// Overlap is also compared block by block: an alignment that wrecks one
-// region of the file to help another (a wrong local anchor) is rejected.
+// The aligner only fires when sync is broken globally (a constant shift or
+// fps drift, where the raw timeline is bad everywhere and correction wins by
+// a wide margin). Pairs that are only partially in sync — e.g. a translation
+// timed for a different cut, wrong in some scenes only — are left untouched:
+// local estimates there are unreliable, and a wrong warp breaks the regions
+// that were already good. Total overlap must improve by this factor...
+const ALIGNMENT_OVERLAP_IMPROVEMENT = 1.25;
+// ...and no block of consecutive cues may end up meaningfully worse than the
+// raw timeline was in that block.
 const ALIGNMENT_BLOCK_CUES = 32;
-const MAX_BLOCK_OVERLAP_LOSS_RATIO = 0.7;
-const BLOCK_OVERLAP_ALLOWANCE_MS = 2000;
+const MAX_BLOCK_OVERLAP_LOSS_RATIO = 0.9;
+const BLOCK_OVERLAP_ALLOWANCE_MS = 750;
 // The same single translation cue is shown on at most this many consecutive
 // entries; after that the main text is shown alone instead of repeating it.
 const MAX_TRANSLATION_REPEATS = 2;
@@ -667,7 +669,8 @@ function isBetterAlignment(aligned: AlignmentScore, raw: AlignmentScore): boolea
         if (alignedBlock < rawBlock * MAX_BLOCK_OVERLAP_LOSS_RATIO - BLOCK_OVERLAP_ALLOWANCE_MS) return false;
     }
     if (aligned.overlapTotalMs > raw.overlapTotalMs * ALIGNMENT_OVERLAP_IMPROVEMENT) return true;
-    return aligned.matchedMains > raw.matchedMains && aligned.overlapTotalMs >= raw.overlapTotalMs;
+    return aligned.matchedMains > raw.matchedMains * 1.1
+        && aligned.overlapTotalMs > raw.overlapTotalMs;
 }
 
 export async function rankSubtitleCandidates<T extends SubtitleCandidate>(
