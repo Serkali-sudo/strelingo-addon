@@ -147,13 +147,18 @@ export async function resolveRequestedLangs(
     return out;
 }
 
-async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<any> {
+// `emptyStatuses` lets a caller treat certain non-2xx codes as "no results"
+// (returns null) rather than an error — some providers (Wyzie) return HTTP 400/404
+// with a "No subtitles found" body instead of an empty list.
+async function fetchJson(url: string, headers: Record<string, string> = {}, emptyStatuses: number[] = []): Promise<any> {
     const res = await fetch(url, {
         headers: { 'Accept': 'application/json', ...headers },
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS)
     });
     if (!res.ok) {
-        throw new Error(`${url} responded with ${res.status}`);
+        if (emptyStatuses.includes(res.status)) return null;
+        // Redact the API key before it reaches the logs.
+        throw new Error(`${redactUrlForLog(url)} responded with ${res.status}`);
     }
     return await res.json();
 }
@@ -201,7 +206,9 @@ async function fetchWyzie(params: ProviderSearchParams, cfg: OptionalProviderCon
 
     const wyzieUrl = `https://sub.wyzie.io/search?${qs.toString()}`;
     logProviderUrl('wyzie', wyzieUrl);
-    const data = await fetchJson(wyzieUrl);
+    // Wyzie returns 400/404 with "No subtitles found" when there are simply no
+    // matches — treat those as an empty result, not a failure.
+    const data = await fetchJson(wyzieUrl, {}, [400, 404]);
     const items: any[] = Array.isArray(data) ? data : Array.isArray(data?.subtitles) ? data.subtitles : [];
 
     const out: ProviderSub[] = [];
@@ -248,7 +255,8 @@ async function subsourceMovieId(params: ProviderSearchParams, apiKey: string): P
 
     const movieSearchUrl = `https://api.subsource.net/api/v1/movies/search?${qs.toString()}`;
     logProviderUrl('subsource', movieSearchUrl);
-    const data = await fetchJson(movieSearchUrl, { 'X-API-Key': apiKey });
+    // 404 = title not on SubSource; treat as "no match" rather than a failure.
+    const data = await fetchJson(movieSearchUrl, { 'X-API-Key': apiKey }, [400, 404]);
     const list: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
     if (list.length === 0) return null;
 
