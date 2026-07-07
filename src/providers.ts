@@ -261,9 +261,13 @@ async function subsourceMovieId(params: ProviderSearchParams, apiKey: string): P
     if (list.length === 0) return null;
 
     if (params.type === 'series' && params.season) {
+        // A specific season was requested — only use an exact season match.
+        // Falling back to "whatever came back first" risks pulling a different
+        // season's movieId, which then makes every subtitle/episode lookup below
+        // silently mismatched.
         const wanted = parseInt(params.season, 10);
         const bySeason = list.find(m => Number(m.season) === wanted);
-        if (bySeason?.movieId != null) return Number(bySeason.movieId);
+        return bySeason?.movieId != null ? Number(bySeason.movieId) : null;
     }
     const first = list.find(m => m?.movieId != null);
     return first ? Number(first.movieId) : null;
@@ -276,12 +280,27 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
     if (movieId == null) return [];
 
     const out: ProviderSub[] = [];
+    // The API has no per-episode filter — a series movieId is a whole season,
+    // so subtitles for it are season packs we later pick an episode's file out
+    // of (see extractSubtitleFromZip). Fetch the max page size for series so
+    // that episode-matching at download time has enough candidates to search
+    // through instead of getting starved by a handful of "popular" results
+    // that happen not to contain the requested episode.
+    const isEpisodeLookup = params.type === 'series' && Boolean(params.season && params.episode);
+    const perLangLimit = isEpisodeLookup ? 100 : 30;
+    // Season-pack candidates are only metadata until one is actually chosen for
+    // download, so it's cheap to keep more of them around for episode-matching;
+    // non-episode lookups keep the normal provider cap.
+    const perLangOutputCap = isEpisodeLookup ? 50 : MAX_RESULTS_PER_PROVIDER;
+
     // SubSource's subtitles endpoint takes a single language, so query per lang.
+    // Cap results per-language (not on the combined list) so a language with
+    // lots of hits can't crowd out a second language's results entirely.
     for (const lang of params.langs) {
         const qs = new URLSearchParams();
         qs.set('movieId', String(movieId));
         qs.set('language', lang.name);
-        qs.set('limit', '30');
+        qs.set('limit', String(perLangLimit));
         qs.set('sort', 'popular');
 
         const subtitlesUrl = `https://api.subsource.net/api/v1/subtitles?${qs.toString()}`;
@@ -295,11 +314,12 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
         }
 
         const items: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+        const langOut: ProviderSub[] = [];
         for (const item of items) {
             const subtitleId = item?.subtitleId ?? item?.id;
             if (subtitleId == null) continue;
             const release = Array.isArray(item.releaseInfo) ? item.releaseInfo.join(' ') : (item.releaseInfo || 'SubSource');
-            out.push({
+            langOut.push({
                 id: `subsource-${subtitleId}`,
                 url: `https://api.subsource.net/api/v1/subtitles/${encodeURIComponent(String(subtitleId))}/download`,
                 lang: lang.code3,
@@ -312,8 +332,9 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
                 episode: params.episode
             });
         }
+        out.push(...langOut.slice(0, perLangOutputCap));
     }
-    return out.slice(0, MAX_RESULTS_PER_PROVIDER);
+    return out;
 }
 
 // Query every enabled optional provider in parallel and pool the results.

@@ -633,15 +633,26 @@ function pickZipSubtitleEntry(names: string[], season?: string, episode?: string
         const patterns = [
             new RegExp(`s0*${s}\\s*[._ -]?\\s*e0*${ep}(?!\\d)`, 'i'),
             new RegExp(`(?:^|[^0-9])0*${s}\\s*x\\s*0*${ep}(?!\\d)`, 'i'),
-            new RegExp(`\\be0*${ep}(?!\\d)`, 'i')
+            new RegExp(`\\bepisode\\W{0,3}0*${ep}(?!\\d)`, 'i'),
+            new RegExp(`\\bep\\W{0,3}0*${ep}(?!\\d)`, 'i'),
+            new RegExp(`\\be0*${ep}(?!\\d)`, 'i'),
+            // Last resort: bare episode number immediately before the extension
+            // (e.g. season-pack entries named "05.srt", "Show - 5.srt").
+            new RegExp(`(?:^|[^0-9])0*${ep}\\.[a-z0-9]{2,4}$`, 'i')
         ];
         for (const re of patterns) {
             const hit = subs.find(n => re.test(n));
             if (hit) return hit;
         }
+        // This archive is a season pack (or similar) that doesn't contain the
+        // requested episode — don't guess a wrong episode's file. Returning null
+        // lets the caller fall back to the next subtitle candidate instead of
+        // silently serving mismatched content.
+        return null;
     }
 
-    // No episode match: prefer the highest-priority extension, then the shortest name.
+    // No episode filter requested (movies, or providers that don't zip season
+    // packs): prefer the highest-priority extension, then the shortest name.
     subs.sort((a, b) => {
         const ea = SUBTITLE_EXT_PRIORITY.indexOf(a.split('.').pop()!.toLowerCase());
         const eb = SUBTITLE_EXT_PRIORITY.indexOf(b.split('.').pop()!.toLowerCase());
@@ -664,7 +675,9 @@ function extractSubtitleFromZip(buffer: Buffer, season?: string, episode?: strin
     const names = Object.keys(entries).filter(name => !name.endsWith('/'));
     const chosen = pickZipSubtitleEntry(names, season, episode);
     if (!chosen) {
-        console.warn('[zip] no subtitle file in archive');
+        console.warn(season && episode
+            ? `[zip] no entry for S${season}E${episode} in archive (${names.length} files)`
+            : '[zip] no subtitle file in archive');
         return null;
     }
     console.log(`[zip] picked "${chosen}" of ${names.length}`);
