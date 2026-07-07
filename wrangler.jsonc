@@ -9,6 +9,9 @@
   "observability": {
     "enabled": true
   },
+  "cache": {
+    "enabled": true
+  },
   "vars": {
     "ENABLE_DIRECT_SERVING": "true"
   }
