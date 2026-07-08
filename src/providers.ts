@@ -339,15 +339,22 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
 
         let items: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
         if (isEpisodeLookup) {
-            // Try episode-confirmed listings first (commentary/releaseInfo text
-            // names the requested episode) — those get served straight from their
-            // zip's single file without needing a filename match at download time.
-            // Unconfirmed listings (season packs, or releases whose text doesn't
-            // mention the episode) are kept as a fallback further down the list,
-            // relying on the download-time filename check to disambiguate.
+            // Episode-confirmed listings (commentary/releaseInfo text names the
+            // requested episode) go first — those get served straight from their
+            // zip's single file, no filename check needed at download time.
+            //
+            // A single-file listing that ISN'T confirmed as the requested episode
+            // is dropped outright: index.ts trusts a lone zip entry unconditionally
+            // (nothing to disambiguate), so an unconfirmed single-file listing
+            // would otherwise get served as the requested episode even when that
+            // episode was never actually in it (e.g. only E10/E14 exist and E4
+            // was asked for). Multi-file listings (real season packs) are kept as
+            // a fallback since the download-time filename check can still verify
+            // — and reject — those.
             const matched = items.filter(it => subsourceMatchesEpisode(it, params.season!, params.episode!));
-            const unmatched = items.filter(it => !subsourceMatchesEpisode(it, params.season!, params.episode!));
-            items = [...matched, ...unmatched];
+            const unmatchedMultiFile = items.filter(it =>
+                !subsourceMatchesEpisode(it, params.season!, params.episode!) && Number(it?.files) > 1);
+            items = [...matched, ...unmatchedMultiFile];
         }
         const langOut: ProviderSub[] = [];
         for (const item of items) {
