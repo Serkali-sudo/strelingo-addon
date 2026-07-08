@@ -393,12 +393,6 @@ function parseLangCode(lang: string | undefined): string | undefined {
     return match ? match[1] : lang;
 }
 
-function getBrowserLanguageOption(acceptLanguageHeader: string | null): string {
-    const code = extractBrowserLanguageFromHeader(acceptLanguageHeader);
-    const name = languageMap[code as keyof typeof languageMap] || 'English';
-    return `${name} [${code}]`;
-}
-
 function stripJsonExtension(str: string | undefined): string {
     if (!str) return '';
     if (str.endsWith('.json')) {
@@ -974,6 +968,15 @@ app.get('/:config/manifest.json', (c) => {
     return c.json(manifest);
 });
 
+// The translation-language default used to be picked server-side from the
+// Accept-Language request header, which made these HTML responses vary per
+// visitor and therefore unsafe to cache at the edge (one visitor's detected
+// language would get served to everyone else hitting the same cached URL).
+// Detection now happens client-side instead (landingTemplate embeds
+// browserLanguageMap and matches it against navigator.languages), so the
+// rendered HTML is identical for everyone and safe for the "cache" setting
+// in wrangler.jsonc to cache normally.
+
 app.get('/', (c) => {
     const addonName = getEnvVar(c, 'ADDON_NAME') || 'Strelingo - Dual Language Subtitles';
     const manifest = getManifest(addonName);
@@ -981,22 +984,21 @@ app.get('/', (c) => {
     if (hasConfig) {
         return c.redirect('/configure');
     }
-    return c.html(landingTemplate(manifest));
+    return c.html(landingTemplate(manifest, { browserLangMap: browserLanguageMap }));
 });
 
 app.get('/configure', (c) => {
     const addonName = getEnvVar(c, 'ADDON_NAME') || 'Strelingo - Dual Language Subtitles';
     const manifest = getManifest(addonName);
-    const browserLangOption = getBrowserLanguageOption(c.req.header('accept-language'));
     if (manifest.config) {
         manifest.config = manifest.config.map(item => {
             if (item.key === 'transLang') {
-                return { ...item, default: browserLangOption };
+                return { ...item, browserDetect: true };
             }
             return item;
         });
     }
-    return c.html(landingTemplate(manifest));
+    return c.html(landingTemplate(manifest, { browserLangMap: browserLanguageMap }));
 });
 
 app.get('/:config/configure', (c) => {
@@ -1013,7 +1015,6 @@ app.get('/:config/configure', (c) => {
         }
     }
 
-    const browserLangOption = getBrowserLanguageOption(c.req.header('accept-language'));
     if (manifest.config) {
         manifest.config = manifest.config.map(item => {
             if (configObj[item.key]) {
@@ -1022,8 +1023,9 @@ app.get('/:config/configure', (c) => {
                     default: configObj[item.key]
                 };
             }
+            // No explicit transLang in the URL config — let the client detect it.
             if (item.key === 'transLang') {
-                return { ...item, default: browserLangOption };
+                return { ...item, browserDetect: true };
             }
             return item;
         });
@@ -1035,7 +1037,7 @@ app.get('/:config/configure', (c) => {
         manifest.name = `${manifest.name} (${mainLangCode}+${transLangCode})`;
     }
 
-    return c.html(landingTemplate(manifest));
+    return c.html(landingTemplate(manifest, { browserLangMap: browserLanguageMap }));
 });
 
 app.get('/:config', (c) => {

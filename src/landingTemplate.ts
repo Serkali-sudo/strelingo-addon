@@ -819,11 +819,23 @@ export interface Manifest {
         section?: string;
         /** Optional "get the key" link rendered next to the field label. */
         link?: { label: string; url: string };
+        /** For `select` fields: pre-select the visitor's own browser language
+         * client-side (via navigator.languages), instead of baking a
+         * server-detected default into the HTML. Keeps the page cacheable
+         * since it no longer needs to vary per visitor. */
+        browserDetect?: boolean;
     }>;
     githubUrl?: string;
 }
 
-export default function landingTemplate(manifest: Manifest): string {
+interface LandingTemplateOptions {
+    /** Maps a lowercased BCP-47 tag (e.g. "tr", "pt-br") to this addon's
+     * 3-letter language code, for client-side browser-language detection.
+     * Only needed when a `select` field sets `browserDetect: true`. */
+    browserLangMap?: Record<string, string>;
+}
+
+export default function landingTemplate(manifest: Manifest, opts: LandingTemplateOptions = {}): string {
     const background = manifest.background || 'https://dl.strem.io/addon-background.jpg';
     const logo = manifest.logo || 'https://dl.strem.io/addon-logo.png';
     const githubUrl = manifest.githubUrl || '';
@@ -906,10 +918,11 @@ export default function landingTemplate(manifest: Manifest): string {
                     const isSelected = el.value === defaultValue;
                     optionsHTML += `<div class="custom-option${isSelected ? ' selected' : ''}" data-value="${el.value}"><span class="option-label">${el.label}</span></div>`;
                 });
+                const autoDetectAttr = elem.browserDetect ? ' data-auto-detect="1"' : '';
                 options += `
                 <div class="form-group">
                     <label for="${key}">${elem.title}</label>
-                    <div class="custom-select-wrapper" data-key="${key}">
+                    <div class="custom-select-wrapper" data-key="${key}"${autoDetectAttr}>
                         <input type="hidden" id="${key}" name="${key}" value="${defaultValue || ''}">
                         <div class="custom-select-trigger" tabindex="0">
                             <span class="select-value">${defaultLabel || 'Select...'}</span>
@@ -1026,6 +1039,40 @@ export default function landingTemplate(manifest: Manifest): string {
                     });
                 });
             });
+
+            // Auto-select the visitor's own browser language, client-side, for any
+            // select field marked browserDetect (see index.ts). Runs once at
+            // render time using navigator.languages so the HTML itself can stay
+            // identical (and cacheable) for every visitor.
+            (() => {
+                const langMap = ${JSON.stringify(opts.browserLangMap || {})};
+                const wrappers = document.querySelectorAll('.custom-select-wrapper[data-auto-detect="1"]');
+                if (!wrappers.length) return;
+
+                const browserTags = (navigator.languages && navigator.languages.length)
+                    ? navigator.languages
+                    : [navigator.language || 'en'];
+
+                let code3 = null;
+                for (const tag of browserTags) {
+                    const lower = String(tag).toLowerCase();
+                    if (langMap[lower]) { code3 = langMap[lower]; break; }
+                    const primary = lower.split('-')[0];
+                    if (langMap[primary]) { code3 = langMap[primary]; break; }
+                }
+                if (!code3) return;
+
+                wrappers.forEach(wrapper => {
+                    const option = wrapper.querySelector('.custom-option[data-value$="[' + code3 + ']"]');
+                    if (!option) return;
+                    const hiddenInput = wrapper.querySelector('input[type="hidden"]');
+                    const valueDisplay = wrapper.querySelector('.select-value');
+                    wrapper.querySelectorAll('.custom-option').forEach(o => o.classList.remove('selected'));
+                    option.classList.add('selected');
+                    hiddenInput.value = option.dataset.value;
+                    valueDisplay.textContent = option.querySelector('.option-label').textContent;
+                });
+            })();
 
             const updateLink = () => {
                 const config = Object.fromEntries(
