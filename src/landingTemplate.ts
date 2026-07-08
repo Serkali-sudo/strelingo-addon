@@ -54,27 +54,104 @@ body {
     pointer-events: none;
 }
 
+.bg-particles {
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.bg-particle {
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.9), rgba(255,255,255,0) 70%);
+    animation: twinkle ease-in-out infinite;
+    will-change: opacity, transform;
+}
+
+@keyframes twinkle {
+    0%, 100% { opacity: 0.12; transform: scale(0.6); }
+    50% { opacity: 0.9; transform: scale(1); }
+}
+
+.bg-aurora {
+    position: fixed;
+    width: 60vmax;
+    height: 60vmax;
+    border-radius: 50%;
+    filter: blur(80px);
+    z-index: -3;
+    opacity: 0.35;
+    pointer-events: none;
+    will-change: transform;
+}
+
+.bg-aurora-1 {
+    top: -22vmax;
+    left: -16vmax;
+    background: radial-gradient(circle, rgba(138, 90, 171, 0.55), transparent 70%);
+    animation: auroraDrift1 26s ease-in-out infinite;
+}
+
+.bg-aurora-2 {
+    bottom: -26vmax;
+    right: -20vmax;
+    background: radial-gradient(circle, rgba(79, 209, 197, 0.4), transparent 70%);
+    animation: auroraDrift2 32s ease-in-out infinite;
+}
+
+@keyframes auroraDrift1 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(6vmax, 4vmax) scale(1.15); }
+}
+
+@keyframes auroraDrift2 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(-5vmax, -6vmax) scale(1.1); }
+}
+
 .subtitle-pair {
     position: absolute;
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: 4px;
-    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-    font-weight: 600;
-    font-size: 15px;
-    line-height: 1.3;
-    text-shadow: 0 2px 12px rgba(0,0,0,0.8);
-    white-space: nowrap;
     opacity: 0;
     will-change: transform, opacity;
 }
 
-.subtitle-line-1 {
-    color: #ffffff;
+.sub-chip {
+    display: inline-block;
+    padding: 5px 13px;
+    border-radius: 8px;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 13.5px;
+    line-height: 1.3;
+    white-space: nowrap;
+    background: rgba(8, 6, 18, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
 
-.subtitle-line-2 {
-    color: #f1c40f;
+.sub-chip-main {
+    color: #fdfdfd;
+}
+
+.sub-chip-trans {
+    color: var(--pair-color, #f1c40f);
+    border-color: var(--pair-color, #f1c40f);
+    border-color: color-mix(in srgb, var(--pair-color, #f1c40f) 45%, transparent);
+}
+
+.sub-connector {
+    width: 2px;
+    height: 8px;
+    margin-left: 17px;
+    background: linear-gradient(var(--pair-color, #f1c40f), transparent);
+    border-radius: 1px;
+    opacity: 0.75;
 }
 
 @keyframes floatUp1 {
@@ -155,6 +232,8 @@ body::after {
     padding: 40px 36px 32px;
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5), 0 0 120px var(--accent-glow);
     animation: cardIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-style: preserve-3d;
+    transition: transform 0.15s ease-out;
 }
 
 @keyframes cardIn {
@@ -210,6 +289,12 @@ body::after {
     border: 1px solid rgba(138, 90, 171, 0.25);
     border-radius: 20px;
     padding: 2px 10px;
+    animation: badgePulse 3s ease-in-out infinite;
+}
+
+@keyframes badgePulse {
+    0%, 100% { box-shadow: 0 0 0 rgba(138, 90, 171, 0); }
+    50% { box-shadow: 0 0 12px rgba(138, 90, 171, 0.55); }
 }
 
 .github-link {
@@ -235,10 +320,13 @@ body::after {
 .lang-label {
     text-align: center;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--accent-light);
     margin-bottom: 16px;
     min-height: 20px;
+    letter-spacing: 0.2px;
+    text-shadow: 0 0 14px var(--accent-glow);
+    transition: color 0.2s ease;
 }
 
 .description {
@@ -655,6 +743,7 @@ body::after {
 }
 
 .btn {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -671,6 +760,22 @@ body::after {
     user-select: none;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+}
+
+.btn::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 -60%;
+    width: 40%;
+    background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+    transform: skewX(-20deg);
+    transition: left 0.6s ease;
+    pointer-events: none;
+}
+
+.btn:hover::before {
+    left: 130%;
 }
 
 .btn-primary {
@@ -781,6 +886,32 @@ body::after {
     }
     .btn {
         flex: none;
+    }
+}
+
+.confetti-piece {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 2000;
+    animation: confettiBurst 900ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes confettiBurst {
+    0% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0.4); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .subtitle-bg, .bg-particles, .bg-aurora {
+        display: none;
+    }
+    .card {
+        transition: none;
     }
 }
 `;
@@ -1148,7 +1279,13 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
         }
     }
 
-    const typePills = stylizedTypes.map(t => `<span class="type-pill">${t}</span>`).join('');
+    const typeIcon = (t: string) => {
+        const low = t.toLowerCase();
+        if (low.includes('movie')) return '🎬';
+        if (low.includes('series')) return '📺';
+        return '🎞️';
+    };
+    const typePills = stylizedTypes.map(t => `<span class="type-pill">${typeIcon(t)} ${t}</span>`).join('');
 
     const descHtml = manifest.description
         ? manifest.description
@@ -1158,27 +1295,45 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
             .trim()
         : '';
 
+    // Each pair renders as two stacked "subtitle chips" (one per language) linked
+    // by a small connector — a nod to the addon's whole premise: two languages,
+    // always paired. `color` gives each drifting pair its own accent so the
+    // background reads as lively and varied rather than a monochrome wash.
     const subtitlePairs = [
-        { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '5%' },
-        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '4s', left: '55%' },
-        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '8s', left: '25%' },
-        { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '12s', left: '70%' },
-        { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '2s', left: '40%' },
-        { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '6s', left: '10%' },
-        { l1: 'You talkin\' to me?', l2: '俺に話しかけてるのか？', anim: 'floatUp7', dur: '20s', delay: '10s', left: '60%' },
-        { l1: "There's no place like home", l2: 'Kein Ort wie zu Hause', anim: 'floatUp8', dur: '34s', delay: '14s', left: '35%' },
-        { l1: 'Just keep swimming', l2: '그냥 계속 헤엄쳐', anim: 'floatUp1', dur: '29s', delay: '16s', left: '75%' },
-        { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp2', dur: '25s', delay: '18s', left: '15%' },
-        { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp3', dur: '31s', delay: '20s', left: '50%' },
-        { l1: 'Here\'s looking at you, kid', l2: 'ดูที่เธอสิ เด็กน้อย', anim: 'floatUp4', dur: '23s', delay: '22s', left: '80%' },
+        { l1: 'May the Force be with you', l2: 'Que la fuerza te acompañe', anim: 'floatUp1', dur: '28s', delay: '0s', left: '5%', color: '#f1c40f' },
+        { l1: "I'll be back", l2: '我还会回来的', anim: 'floatUp2', dur: '22s', delay: '4s', left: '55%', color: '#ff6b81' },
+        { l1: 'To infinity and beyond', l2: 'हमेशा के लिए और उससे आगे', anim: 'floatUp3', dur: '32s', delay: '8s', left: '25%', color: '#4fd1c5' },
+        { l1: 'Why so serious?', l2: 'لماذا هذا الجد؟', anim: 'floatUp4', dur: '26s', delay: '12s', left: '70%', color: '#ff9f43' },
+        { l1: 'Hasta la vista, baby', l2: 'Até logo, baby', anim: 'floatUp5', dur: '24s', delay: '2s', left: '40%', color: '#54a0ff' },
+        { l1: 'I see dead people', l2: 'Я вижу мёртвых людей', anim: 'floatUp6', dur: '30s', delay: '6s', left: '10%', color: '#a870c8' },
+        { l1: 'You talkin\' to me?', l2: '俺に話しかけてるのか？', anim: 'floatUp7', dur: '20s', delay: '10s', left: '60%', color: '#1dd1a1' },
+        { l1: "There's no place like home", l2: 'Kein Ort wie zu Hause', anim: 'floatUp8', dur: '34s', delay: '14s', left: '35%', color: '#ff6b6b' },
+        { l1: 'Just keep swimming', l2: '그냥 계속 헤엄쳐', anim: 'floatUp1', dur: '29s', delay: '16s', left: '75%', color: '#feca57' },
+        { l1: 'I am your father', l2: 'Sono tuo padre', anim: 'floatUp2', dur: '25s', delay: '18s', left: '15%', color: '#48dbfb' },
+        { l1: 'You shall not pass', l2: 'Geçemeyeceksin', anim: 'floatUp3', dur: '31s', delay: '20s', left: '50%', color: '#ff9ff3' },
+        { l1: 'Here\'s looking at you, kid', l2: 'ดูที่เธอสิ เด็กน้อย', anim: 'floatUp4', dur: '23s', delay: '22s', left: '80%', color: '#00d2d3' },
     ];
 
-    const subtitleBgHTML = subtitlePairs.map((p, i) =>
-        `<div class="subtitle-pair" style="left:${p.left};animation:${p.anim} ${p.dur} linear ${p.delay} infinite;">` +
-        `<span class="subtitle-line-1">${p.l1}</span>` +
-        `<span class="subtitle-line-2">${p.l2}</span>` +
+    const subtitleBgHTML = subtitlePairs.map((p) =>
+        `<div class="subtitle-pair" style="left:${p.left};animation:${p.anim} ${p.dur} linear ${p.delay} infinite;--pair-color:${p.color}">` +
+        `<span class="sub-chip sub-chip-main">${p.l1}</span>` +
+        `<span class="sub-connector"></span>` +
+        `<span class="sub-chip sub-chip-trans">${p.l2}</span>` +
         `</div>`
     ).join('\n');
+
+    // Ambient twinkling particles. Positions/timings are derived deterministically
+    // from the index (not Math.random()) so the rendered HTML — and therefore the
+    // page's edge cache — stays byte-identical across requests.
+    const particleCount = 26;
+    const particlesHTML = Array.from({ length: particleCount }, (_, i) => {
+        const left = (i * 37) % 100;
+        const top = (i * 53 + 11) % 100;
+        const size = 2 + (i % 4);
+        const dur = 4 + (i % 6);
+        const delay = ((i % 10) * 0.6).toFixed(1);
+        return `<span class="bg-particle" style="left:${left}%;top:${top}%;width:${size}px;height:${size}px;animation-duration:${dur}s;animation-delay:${delay}s;"></span>`;
+    }).join('');
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -1191,6 +1346,9 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
     <style>${STYLESHEET}</style>
 </head>
 <body>
+    <div class="bg-aurora bg-aurora-1"></div>
+    <div class="bg-aurora bg-aurora-2"></div>
+    <div class="bg-particles">${particlesHTML}</div>
     <div class="subtitle-bg">${subtitleBgHTML}</div>
     <div class="card">
         ${githubIcon}
@@ -1219,6 +1377,51 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
 
     <script>
         ${script}
+
+        // Fun, purely-decorative micro-interactions: a subtle 3D tilt on the
+        // card and a confetti burst on Install/Web Install. Skipped for touch
+        // devices (no hover/tilt) and prefers-reduced-motion.
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        const isFinePointer = window.matchMedia('(pointer: fine)').matches
+        const card = document.querySelector('.card')
+
+        if (card && !prefersReducedMotion && isFinePointer) {
+            card.addEventListener('mousemove', (e) => {
+                const rect = card.getBoundingClientRect()
+                const x = (e.clientX - rect.left) / rect.width - 0.5
+                const y = (e.clientY - rect.top) / rect.height - 0.5
+                card.style.transform = 'rotateY(' + (x * 4).toFixed(2) + 'deg) rotateX(' + (-y * 4).toFixed(2) + 'deg)'
+            })
+            card.addEventListener('mouseleave', () => {
+                card.style.transform = ''
+            })
+        }
+
+        function burstConfetti(x, y) {
+            if (prefersReducedMotion) return
+            const colors = ['#8A5AAB', '#f1c40f', '#4fd1c5', '#ff6b81', '#54a0ff', '#1dd1a1']
+            for (let i = 0; i < 18; i++) {
+                const piece = document.createElement('div')
+                piece.className = 'confetti-piece'
+                const angle = Math.random() * Math.PI * 2
+                const dist = 60 + Math.random() * 80
+                piece.style.setProperty('--dx', (Math.cos(angle) * dist).toFixed(0) + 'px')
+                piece.style.setProperty('--dy', (Math.sin(angle) * dist - 40).toFixed(0) + 'px')
+                piece.style.setProperty('--rot', (Math.random() * 480 - 240).toFixed(0) + 'deg')
+                piece.style.left = x + 'px'
+                piece.style.top = y + 'px'
+                piece.style.background = colors[i % colors.length]
+                document.body.appendChild(piece)
+                piece.addEventListener('animationend', () => piece.remove())
+            }
+        }
+
+        ;[installLink, webInstallLink].forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                if (btn.classList.contains('btn-disabled')) return
+                burstConfetti(e.clientX, e.clientY)
+            })
+        })
 
         copyLinkBtn.onclick = async () => {
             const url = copyLinkBtn.dataset.url
