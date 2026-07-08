@@ -191,13 +191,17 @@ export function sanitizeSubtitleText(text: string): string {
         .replace(/&lt;/gi, '<')
         .replace(/&gt;/gi, '>')
         .replace(/&amp;/gi, '&')
+        // Strip bracketed/parenthetical annotations before splitting into lines:
+        // SDH cues often wrap a single [...] sound description across two lines
+        // (e.g. "[♪ soft music" / "continues]"), and the per-line check below
+        // would never see either half as a complete annotation.
+        .replace(ANNOTATION_PATTERN, ' ')
         .split(/\r?\n|\r/g)
         .map(line => {
             if (STANDALONE_SDH_LINE_PATTERN.test(line)) return '';
             if (MUSIC_NOTE_LINE_PATTERN.test(line) || HASH_MUSIC_LINE_PATTERN.test(line)) return '';
             return line
                 .replace(SPEAKER_LABEL_PATTERN, '')
-                .replace(ANNOTATION_PATTERN, ' ')
                 .replace(MUSIC_NOTE_CHARS_PATTERN, ' ')
                 .trim();
         })

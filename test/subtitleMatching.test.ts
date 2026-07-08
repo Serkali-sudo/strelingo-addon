@@ -300,4 +300,16 @@ const toSrtTime = (ms) => {
     assert.equal(sanitizeSubtitleText('# happy birthday to you #\nBlow the candles.'), 'Blow the candles.');
 }
 
+// A bracketed sound/music annotation that wraps across two physical lines of
+// one cue (a common SDH convention) must be stripped entirely, not leaked as
+// literal "[..." / "...]" fragments.
+{
+    assert.equal(sanitizeSubtitleText('[♪ soft, dramatic music\ncontinues]'), '');
+    assert.equal(sanitizeSubtitleText('[♪ somber music\ncontinues playing]'), '');
+    assert.equal(
+        sanitizeSubtitleText('(muttering something\nunder his breath)\nHello there.'),
+        'Hello there.'
+    );
+}
+
 console.log('subtitleMatching tests passed');
