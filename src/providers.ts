@@ -243,8 +243,11 @@ async function fetchWyzie(params: ProviderSearchParams, cfg: OptionalProviderCon
 // ---------------------------------------------------------------------------
 // SubSource (https://api.subsource.net) — X-API-Key header; downloads are always
 // a ZIP, extracted by fetchSubtitleContent() at download time (no proxy route).
-// Series are modeled as season packs; the episode hint is carried so the right
-// file is picked out of the zip.
+// Series are modeled as season-level listings. The listing already carries
+// episode-identifying text (commentary/releaseInfo), so candidates are matched
+// against the requested episode BEFORE download (subsourceMatchesEpisode); the
+// season/episode hint is still carried through as a fallback in case a chosen
+// zip turns out to be a real multi-episode season pack (see pickZipSubtitleEntry).
 // ---------------------------------------------------------------------------
 async function subsourceMovieId(params: ProviderSearchParams, apiKey: string): Promise<number | null> {
     const qs = new URLSearchParams();
@@ -273,6 +276,32 @@ async function subsourceMovieId(params: ProviderSearchParams, apiKey: string): P
     return first ? Number(first.movieId) : null;
 }
 
+// The /subtitles listing already carries episode-identifying text for free —
+// `commentary` (uploader's note, e.g. "S36E14") and `releaseInfo` (the release
+// name, which for single-episode uploads is often the episode's own filename).
+// Matching against that text lets us tell which season-pack-listing entries
+// are actually for the requested episode WITHOUT downloading and unzipping
+// every candidate first.
+function subsourceEpisodeText(item: any): string {
+    const commentary = String(item?.commentary || '');
+    const releaseInfo = Array.isArray(item?.releaseInfo) ? item.releaseInfo.join(' ') : String(item?.releaseInfo || '');
+    return `${commentary} ${releaseInfo}`;
+}
+
+function subsourceMatchesEpisode(item: any, season: string, episode: string): boolean {
+    const s = parseInt(season, 10);
+    const ep = parseInt(episode, 10);
+    const text = subsourceEpisodeText(item);
+    const patterns = [
+        new RegExp(`s0*${s}\\s*[._ -]?\\s*e0*${ep}(?!\\d)`, 'i'),
+        new RegExp(`(?:^|[^0-9])0*${s}\\s*x\\s*0*${ep}(?!\\d)`, 'i'),
+        new RegExp(`\\bepisode\\W{0,3}0*${ep}(?!\\d)`, 'i'),
+        new RegExp(`\\bep\\W{0,3}0*${ep}(?!\\d)`, 'i'),
+        new RegExp(`\\be0*${ep}(?!\\d)`, 'i')
+    ];
+    return patterns.some(re => re.test(text));
+}
+
 async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProviderConfig): Promise<ProviderSub[]> {
     if (!cfg.subsourceKey) return [];
 
@@ -281,17 +310,12 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
 
     const out: ProviderSub[] = [];
     // The API has no per-episode filter — a series movieId is a whole season,
-    // so subtitles for it are season packs we later pick an episode's file out
-    // of (see extractSubtitleFromZip). Fetch the max page size for series so
-    // that episode-matching at download time has enough candidates to search
-    // through instead of getting starved by a handful of "popular" results
-    // that happen not to contain the requested episode.
+    // so subtitles for it are season-level listings. Fetch the max page size
+    // for series so the episode-text filter below has enough listing entries
+    // to search through instead of getting starved by a handful of "popular"
+    // results that happen not to mention the requested episode.
     const isEpisodeLookup = params.type === 'series' && Boolean(params.season && params.episode);
     const perLangLimit = isEpisodeLookup ? 100 : 30;
-    // Season-pack candidates are only metadata until one is actually chosen for
-    // download, so it's cheap to keep more of them around for episode-matching;
-    // non-episode lookups keep the normal provider cap.
-    const perLangOutputCap = isEpisodeLookup ? 50 : MAX_RESULTS_PER_PROVIDER;
 
     // SubSource's subtitles endpoint takes a single language, so query per lang.
     // Cap results per-language (not on the combined list) so a language with
@@ -313,7 +337,18 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
             continue;
         }
 
-        const items: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+        let items: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+        if (isEpisodeLookup) {
+            // Try episode-confirmed listings first (commentary/releaseInfo text
+            // names the requested episode) — those get served straight from their
+            // zip's single file without needing a filename match at download time.
+            // Unconfirmed listings (season packs, or releases whose text doesn't
+            // mention the episode) are kept as a fallback further down the list,
+            // relying on the download-time filename check to disambiguate.
+            const matched = items.filter(it => subsourceMatchesEpisode(it, params.season!, params.episode!));
+            const unmatched = items.filter(it => !subsourceMatchesEpisode(it, params.season!, params.episode!));
+            items = [...matched, ...unmatched];
+        }
         const langOut: ProviderSub[] = [];
         for (const item of items) {
             const subtitleId = item?.subtitleId ?? item?.id;
@@ -332,7 +367,7 @@ async function fetchSubsource(params: ProviderSearchParams, cfg: OptionalProvide
                 episode: params.episode
             });
         }
-        out.push(...langOut.slice(0, perLangOutputCap));
+        out.push(...langOut.slice(0, MAX_RESULTS_PER_PROVIDER));
     }
     return out;
 }

@@ -627,6 +627,14 @@ function pickZipSubtitleEntry(names: string[], season?: string, episode?: string
     });
     if (subs.length === 0) return null;
 
+    // A single-file archive has nothing to disambiguate — the episode match
+    // (if any was required) already happened before download, using the
+    // provider's own listing metadata (see SubSource's commentary/releaseInfo
+    // filtering in providers.ts). The filename itself is often just a release
+    // title with no "SxxExx" in it, so don't reject a lone file for failing a
+    // pattern match against its name.
+    if (subs.length === 1) return subs[0];
+
     if (season && episode) {
         const s = parseInt(season, 10);
         const ep = parseInt(episode, 10);
