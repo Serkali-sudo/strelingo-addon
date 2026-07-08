@@ -285,8 +285,14 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
 
     // Pass 2: pick the translation cues for each main cue. A main cue takes
     // the translation cues it owns (plus any cue that genuinely spans it),
-    // and falls back to the best nearby cue when it owns none.
+    // and falls back to the best nearby cue when it owns none. `confident`
+    // marks a real (materially-overlapping) match, as opposed to a fallback
+    // pick with no actual overlap — only confident picks may be combined in
+    // Pass 3, so an untranslated stretch (e.g. a skipped song) that happens
+    // to fall back to the same nearby cue as real dialogue never gets its
+    // text glued onto that dialogue's translation.
     const pickedTranslations: Array<Array<TimedCue<T>>> = new Array(mainTimed.length);
+    const pickedIsConfident: boolean[] = new Array(mainTimed.length);
 
     for (let mi = 0; mi < mainTimed.length; mi++) {
         const mainCue = mainTimed[mi];
@@ -324,6 +330,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
             : fallback
                 ? [fallback.cue]
                 : [];
+        pickedIsConfident[mi] = chosenTranslations.length > 0;
     }
 
     // Pass 3: emit the entries. When consecutive main cues share the same
@@ -334,12 +341,12 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
         const picked = pickedTranslations[mi];
         let last = mi;
 
-        if (picked.length === 1) {
+        if (picked.length === 1 && pickedIsConfident[mi]) {
             const sharedCue = picked[0];
             let joinedLength = mainTimed[mi].text.length;
             while (last + 1 < mainTimed.length) {
                 const nextPicked = pickedTranslations[last + 1];
-                if (nextPicked.length !== 1 || nextPicked[0] !== sharedCue) break;
+                if (nextPicked.length !== 1 || nextPicked[0] !== sharedCue || !pickedIsConfident[last + 1]) break;
                 const nextMain = mainTimed[last + 1];
                 if (nextMain.startMs - mainTimed[last].endMs > MERGED_MAIN_MAX_GAP_MS) break;
                 if (nextMain.endMs - mainTimed[mi].startMs > MERGED_MAIN_MAX_DURATION_MS) break;

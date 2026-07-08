@@ -151,6 +151,25 @@ const toSrtTime = (ms) => {
     assert.equal(merged[0].endTime, '00:00:14,000');
 }
 
+// An untranslated main cue (e.g. a skipped song line) sitting right before a
+// genuinely-translated cue must never have its text glued onto that cue's
+// translation, even when both happen to fall back to the same nearby
+// translation cue (the untranslated one has no material overlap of its own;
+// the next one owns the cue for real).
+{
+    const merged = mergeSubtitlesByTime(
+        [
+            cue('1', '00:00:10,000', '00:00:12,000', 'La la la'),
+            cue('2', '00:00:12,500', '00:00:14,500', 'Real line')
+        ],
+        [cue('1', '00:00:12,400', '00:00:14,600', 'Ceviri')]
+    );
+
+    assert.equal(merged.length, 2);
+    assert.equal(merged[0].text, '<b>La la la</b>\n<i>> Ceviri</i>');
+    assert.equal(merged[1].text, '<b>Real line</b>\n<i>> Ceviri</i>');
+}
+
 // Same, with realistic split dialogue: the two halves of the main sentence
 // are joined and the shared translation appears once.
 {
