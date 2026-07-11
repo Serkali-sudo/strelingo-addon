@@ -450,7 +450,7 @@ function trackSegments<T extends SubtitleCue>(
             anchor = estimateSegmentOffset(mainTimed, transTimed, transStarts, from, to, prevOffsetMs, INITIAL_SEARCH_WINDOW_MS, s);
             // A first lock must be unambiguous — a thin cluster inside such a
             // wide window is more likely rhythm noise than the true offset.
-            if (anchor && anchor.pairCount < MIN_INITIAL_LOCK_PAIRS && anchor.pairRatio < MIN_INITIAL_LOCK_RATIO) {
+            if (anchor && (anchor.pairCount < MIN_INITIAL_LOCK_PAIRS || anchor.pairRatio < MIN_INITIAL_LOCK_RATIO)) {
                 anchor = null;
             }
         }
@@ -559,13 +559,14 @@ function estimateSegmentOffset<T extends SubtitleCue>(
         const mainCue = mainTimed[from + Math.floor(i * segmentLength / sampleCount)];
         const firstIndex = lowerBound(transStarts, mainCue.startMs + centerOffsetMs - searchWindowMs);
         const deltas: Array<{ deltaMs: number; weight: number }> = [];
+        const minDurationRatio = searchWindowMs > 30000 ? 0.48 : 0.25;
 
         for (let j = firstIndex; j < transTimed.length; j++) {
             const transCue = transTimed[j];
             if (transCue.startMs > mainCue.startMs + centerOffsetMs + searchWindowMs) break;
 
             const durationRatio = Math.min(mainCue.durationMs, transCue.durationMs) / Math.max(mainCue.durationMs, transCue.durationMs);
-            if (durationRatio < 0.25) continue;
+            if (durationRatio < minDurationRatio) continue;
 
             deltas.push({ deltaMs: transCue.startMs - mainCue.startMs, weight: durationRatio });
         }
