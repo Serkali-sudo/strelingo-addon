@@ -321,7 +321,12 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
                     Math.abs(transCue.startMs - mainCue.startMs)
                 );
 
-            if (match.overlapMs <= 0 && gapMs > mergeThresholdMs) continue;
+            if (match.overlapMs <= 0 && gapMs > mergeThresholdMs) {
+                const withinProximity = gapMs <= 15000;
+                if (!withinProximity || !shareProperNounsOrNumbers(mainCue.text, transCue.text)) {
+                    continue;
+                }
+            }
 
             if (isMaterialOverlap(mainCue, transCue, match.overlapMs)) {
                 const isOwner = bestMainForTrans[i] === mi;
@@ -1022,6 +1027,51 @@ function isMaterialOverlap<T extends SubtitleCue>(
     if (overlapMs <= 0) return false;
     const shortestDuration = Math.max(1, Math.min(mainCue.durationMs, transCue.durationMs));
     return overlapMs >= 250 || overlapMs / shortestDuration >= 0.35;
+}
+
+function shareProperNounsOrNumbers(textA: string, textB: string): boolean {
+    const stopWords = new Set([
+        // English
+        'the', 'and', 'you', 'for', 'with', 'that', 'this', 'have', 'not', 'but',
+        'what', 'are', 'out', 'was', 'one', 'get', 'know', 'like', 'who', 'him',
+        'her', 'his', 'she', 'they', 'them', 'yes', 'did', 'good', 'well', 'about',
+        'would', 'their', 'there', 'been', 'dont', 'does', 'didnt', 'can', 'cant',
+        // Turkish
+        'bir', 'icin', 'için', 'ama', 'veya', 'daha', 'gibi', 'kadar', 'hem', 'her',
+        // Spanish / Portuguese / Italian
+        'los', 'las', 'con', 'por', 'para', 'que', 'como', 'este', 'esta', 'uma',
+        'com', 'gli', 'per', 'che',
+        // German
+        'der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'mit', 'von', 'für',
+        'dass', 'nicht', 'ist', 'sind',
+        // French
+        'les', 'une', 'avec', 'pour', 'que', 'comme', 'dans', 'sur', 'plus'
+    ]);
+
+    const getProperNounsAndNumbers = (text: string) => {
+        const words = text.replace(/<[^>]+>/g, '').split(/[^a-zA-Z0-9çÇğĞıİöÖşŞüÜ]+/);
+        const valid = new Set<string>();
+        for (const w of words) {
+            if (w.length > 2 && !stopWords.has(w.toLowerCase())) {
+                const isNumber = /^\d+$/.test(w);
+                const isCapitalized = w[0] === w[0].toUpperCase() && w[0] !== w[0].toLowerCase();
+                if (isNumber || isCapitalized) {
+                    valid.add(w.toLowerCase());
+                }
+            }
+        }
+        return valid;
+    };
+
+    const wordsA = getProperNounsAndNumbers(textA);
+    const wordsB = getProperNounsAndNumbers(textB);
+
+    for (const w of wordsA) {
+        if (wordsB.has(w)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function dedupeByUrl<T extends SubtitleCandidate>(subList: T[]): Array<{ sub: T; originalIndex: number }> {
