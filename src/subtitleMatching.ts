@@ -224,6 +224,17 @@ export function parseSrtTimeToMs(timeString: string): number | null {
     return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
 }
 
+function formatMsToSrtTime(ms: number): string {
+    const nonNegativeMs = Math.max(0, ms);
+    const hours = Math.floor(nonNegativeMs / 3600000);
+    const minutes = Math.floor((nonNegativeMs % 3600000) / 60000);
+    const seconds = Math.floor((nonNegativeMs % 60000) / 1000);
+    const milliseconds = Math.floor(nonNegativeMs % 1000);
+
+    const pad = (num: number, len: number) => String(num).padStart(len, '0');
+    return `${pad(hours, 2)}:${pad(minutes, 2)}:${pad(seconds, 2)},${pad(milliseconds, 3)}`;
+}
+
 export function mergeSubtitlesByTime<T extends SubtitleCue>(
     mainSubs: T[],
     transSubs: T[],
@@ -382,6 +393,46 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
         }
         mi = last + 1;
     }
+
+    // Pass 4: retain leftover translation cues (e.g. Na'vi dialogue translations
+    // or translator credits that have no matching English cues in the main subtitle file).
+    const transIndexMap = new Map<TimedCue<T>, number>();
+    transTimed.forEach((cue, i) => transIndexMap.set(cue, i));
+
+    const transPicked = new Uint8Array(transTimed.length);
+    for (let mi = 0; mi < mainTimed.length; mi++) {
+        for (const trans of pickedTranslations[mi]) {
+            const idx = transIndexMap.get(trans);
+            if (idx !== undefined) {
+                transPicked[idx] = 1;
+            }
+        }
+    }
+
+    for (let ti = 0; ti < transTimed.length; ti++) {
+        if (transPicked[ti] === 0) {
+            const warpedTrans = transTimed[ti];
+            const text = warpedTrans.text.trim();
+            if (text) {
+                mergedSubs.push({
+                    ...warpedTrans.cue,
+                    startTime: formatMsToSrtTime(warpedTrans.startMs),
+                    endTime: formatMsToSrtTime(warpedTrans.endMs),
+                    text: `<i>> ${text}</i>`
+                });
+            }
+        }
+    }
+
+    mergedSubs.sort((a, b) => {
+        const startA = parseSrtTimeToMs(a.startTime) || 0;
+        const startB = parseSrtTimeToMs(b.startTime) || 0;
+        return startA - startB;
+    });
+
+    mergedSubs.forEach((cue, idx) => {
+        cue.id = String(idx + 1);
+    });
 
     return mergedSubs;
 }
