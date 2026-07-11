@@ -131,7 +131,7 @@ const WIDE_SEARCH_WINDOW_MS = 60000;
 // demands stronger cluster evidence before trusting an initial lock.
 const INITIAL_SEARCH_WINDOW_MS = 120000;
 const MIN_INITIAL_LOCK_PAIRS = 4;
-const MIN_INITIAL_LOCK_RATIO = 0.8;
+const MIN_INITIAL_LOCK_RATIO = 0.5;
 // Global robust line fit over the tracked anchors: when at least this share
 // of anchors follows one offset line (a constant offset, or fps drift), the
 // line becomes the backbone — outlier anchors are discarded and every segment
@@ -510,7 +510,23 @@ function refineAnchorsAlongLine<T extends SubtitleCue>(
         }
     }
 
-    if (refined.length >= 3) return enforceMonotonicAnchors(refined);
+    if (refined.length >= 3) {
+        // Prevent extrapolation drift at boundaries by adding line-predicted anchors
+        const firstMs = mainTimed[0].startMs;
+        const lastMs = mainTimed[mainTimed.length - 1].startMs;
+        const lineAnchor = (mainMs: number): AlignmentAnchor => {
+            const offsetMs = line.slope * mainMs + line.interceptMs;
+            return { mainMs, transMs: mainMs + offsetMs, offsetMs, pairCount: 0, pairRatio: 0, segmentIndex: -1 };
+        };
+        const allAnchors = [...refined];
+        if (!allAnchors.some(a => a.mainMs <= firstMs + 5000)) {
+            allAnchors.unshift(lineAnchor(firstMs));
+        }
+        if (!allAnchors.some(a => a.mainMs >= lastMs - 5000)) {
+            allAnchors.push(lineAnchor(lastMs));
+        }
+        return enforceMonotonicAnchors(allAnchors);
+    }
 
     // Too few local confirmations: apply the line itself across the whole span.
     const lineAnchor = (mainMs: number): AlignmentAnchor => {
@@ -773,13 +789,23 @@ function scoreAlignment<T extends SubtitleCue>(
 }
 
 function isBetterAlignment(aligned: AlignmentScore, raw: AlignmentScore): boolean {
-    // Reject any alignment that noticeably degrades one region of the file,
-    // even if it helps elsewhere — that is the signature of a wrong anchor.
-    for (let b = 0; b < raw.blockMatched.length; b++) {
-        const rawBlock = raw.blockMatched[b];
-        const alignedBlock = aligned.blockMatched[b] || 0;
-        const allowedLoss = Math.max(MIN_BLOCK_LOSS_ALLOWANCE, Math.floor(rawBlock * MAX_BLOCK_LOSS_RATIO));
-        if (alignedBlock < rawBlock - allowedLoss) return false;
+    // If the aligned version matches significantly more cues overall, trust it
+    // regardless of local block comparisons. When there is a large offset,
+    // raw timeline blocks can have many accidental "rhythm noise" overlaps in
+    // regions where the true aligned timeline is empty (e.g. gaps/silences),
+    // which would cause the block check to incorrectly reject the true alignment.
+    const globalImprovement = aligned.matchedMains - raw.matchedMains;
+    const isGloballyMuchBetter = globalImprovement >= 15 || globalImprovement > raw.matchedMains * 0.2;
+
+    if (!isGloballyMuchBetter) {
+        // Reject any alignment that noticeably degrades one region of the file,
+        // even if it helps elsewhere — that is the signature of a wrong anchor.
+        for (let b = 0; b < raw.blockMatched.length; b++) {
+            const rawBlock = raw.blockMatched[b];
+            const alignedBlock = aligned.blockMatched[b] || 0;
+            const allowedLoss = Math.max(MIN_BLOCK_LOSS_ALLOWANCE, Math.floor(rawBlock * MAX_BLOCK_LOSS_RATIO));
+            if (alignedBlock < rawBlock - allowedLoss) return false;
+        }
     }
     if (aligned.matchedMains !== raw.matchedMains) return aligned.matchedMains > raw.matchedMains;
     return aligned.overlapTotalMs > raw.overlapTotalMs * ALIGNMENT_OVERLAP_IMPROVEMENT;
