@@ -244,3 +244,4 @@ const movies: MovieConfig[] = [
 
 export default movies;
 export type { MovieConfig };
+

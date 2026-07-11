@@ -208,3 +208,4 @@ export function validateSrtFormat(content: string): SrtValidationResult {
         cueCount
     };
 }
+

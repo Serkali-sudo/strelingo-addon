@@ -55,3 +55,4 @@ done
 echo "Server started but not responding after 60 seconds"
 echo "Check logs: tail -f $LOG_FILE"
 exit 1
+

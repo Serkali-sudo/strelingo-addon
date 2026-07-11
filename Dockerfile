@@ -15,4 +15,4 @@ COPY . .
 EXPOSE 7000
 
 # Run the addon with tsx
-CMD ["npx", "tsx", "src/index.ts"]
+CMD ["npx", "tsx", "src/index.ts"] 

@@ -84,3 +84,4 @@ export default async function ensureInputs(): Promise<void> {
 
     console.log('\n✓ All test inputs ready\n');
 }
+
