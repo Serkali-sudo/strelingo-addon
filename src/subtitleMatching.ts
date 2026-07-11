@@ -171,6 +171,7 @@ const SPANNING_COVERAGE_RATIO = 0.5;
 const MERGED_MAIN_MAX_CHARS = 90;
 const MERGED_MAIN_MAX_GAP_MS = 1500;
 const MERGED_MAIN_MAX_DURATION_MS = 8000;
+const MAX_PROXIMITY_WINDOW_MS = 15000;
 
 const STANDALONE_SDH_LINE_PATTERN = /^\s*(?:-\s*)?[\[(][^\])]+[\])]\s*$/;
 const ANNOTATION_PATTERN = /[\[(][^\])]*[\])]/g;
@@ -274,7 +275,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
         const mainCue = mainTimed[mi];
         while (
             transCursor < transTimed.length &&
-            transTimed[transCursor].endMs < mainCue.startMs - mergeThresholdMs
+            transTimed[transCursor].endMs < mainCue.startMs - MAX_PROXIMITY_WINDOW_MS
         ) {
             transCursor++;
         }
@@ -283,7 +284,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
         let i = transCursor;
         for (; i < transTimed.length; i++) {
             const transCue = transTimed[i];
-            if (transCue.startMs > mainCue.endMs + mergeThresholdMs) break;
+            if (transCue.startMs > mainCue.endMs + MAX_PROXIMITY_WINDOW_MS) break;
 
             const overlapMs = Math.max(0, Math.min(mainCue.endMs, transCue.endMs) - Math.max(mainCue.startMs, transCue.startMs));
             if (overlapMs > bestOverlapForTrans[i]) {
@@ -322,7 +323,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
                 );
 
             if (match.overlapMs <= 0 && gapMs > mergeThresholdMs) {
-                const withinProximity = gapMs <= 15000;
+                const withinProximity = gapMs <= MAX_PROXIMITY_WINDOW_MS;
                 if (!withinProximity || !shareProperNounsOrNumbers(mainCue.text, transCue.text)) {
                     continue;
                 }
