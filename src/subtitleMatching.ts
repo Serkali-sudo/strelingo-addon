@@ -171,7 +171,6 @@ const SPANNING_COVERAGE_RATIO = 0.5;
 const MERGED_MAIN_MAX_CHARS = 90;
 const MERGED_MAIN_MAX_GAP_MS = 1500;
 const MERGED_MAIN_MAX_DURATION_MS = 8000;
-const MAX_PROXIMITY_WINDOW_MS = 15000;
 
 const STANDALONE_SDH_LINE_PATTERN = /^\s*(?:-\s*)?[\[(][^\])]+[\])]\s*$/;
 const ANNOTATION_PATTERN = /[\[(][^\])]*[\])]/g;
@@ -275,7 +274,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
         const mainCue = mainTimed[mi];
         while (
             transCursor < transTimed.length &&
-            transTimed[transCursor].endMs < mainCue.startMs - MAX_PROXIMITY_WINDOW_MS
+            transTimed[transCursor].endMs < mainCue.startMs - mergeThresholdMs
         ) {
             transCursor++;
         }
@@ -284,7 +283,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
         let i = transCursor;
         for (; i < transTimed.length; i++) {
             const transCue = transTimed[i];
-            if (transCue.startMs > mainCue.endMs + MAX_PROXIMITY_WINDOW_MS) break;
+            if (transCue.startMs > mainCue.endMs + mergeThresholdMs) break;
 
             const overlapMs = Math.max(0, Math.min(mainCue.endMs, transCue.endMs) - Math.max(mainCue.startMs, transCue.startMs));
             if (overlapMs > bestOverlapForTrans[i]) {
@@ -322,12 +321,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
                     Math.abs(transCue.startMs - mainCue.startMs)
                 );
 
-            if (match.overlapMs <= 0 && gapMs > mergeThresholdMs) {
-                const withinProximity = gapMs <= MAX_PROXIMITY_WINDOW_MS;
-                if (!withinProximity || !shareProperNounsOrNumbers(mainCue.text, transCue.text)) {
-                    continue;
-                }
-            }
+            if (match.overlapMs <= 0 && gapMs > mergeThresholdMs) continue;
 
             if (isMaterialOverlap(mainCue, transCue, match.overlapMs)) {
                 const isOwner = bestMainForTrans[i] === mi;
@@ -1028,51 +1022,6 @@ function isMaterialOverlap<T extends SubtitleCue>(
     if (overlapMs <= 0) return false;
     const shortestDuration = Math.max(1, Math.min(mainCue.durationMs, transCue.durationMs));
     return overlapMs >= 250 || overlapMs / shortestDuration >= 0.35;
-}
-
-function shareProperNounsOrNumbers(textA: string, textB: string): boolean {
-    const stopWords = new Set([
-        // English
-        'the', 'and', 'you', 'for', 'with', 'that', 'this', 'have', 'not', 'but',
-        'what', 'are', 'out', 'was', 'one', 'get', 'know', 'like', 'who', 'him',
-        'her', 'his', 'she', 'they', 'them', 'yes', 'did', 'good', 'well', 'about',
-        'would', 'their', 'there', 'been', 'dont', 'does', 'didnt', 'can', 'cant',
-        // Turkish
-        'bir', 'icin', 'için', 'ama', 'veya', 'daha', 'gibi', 'kadar', 'hem', 'her',
-        // Spanish / Portuguese / Italian
-        'los', 'las', 'con', 'por', 'para', 'que', 'como', 'este', 'esta', 'uma',
-        'com', 'gli', 'per', 'che',
-        // German
-        'der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'mit', 'von', 'für',
-        'dass', 'nicht', 'ist', 'sind',
-        // French
-        'les', 'une', 'avec', 'pour', 'que', 'comme', 'dans', 'sur', 'plus'
-    ]);
-
-    const getProperNounsAndNumbers = (text: string) => {
-        const words = text.replace(/<[^>]+>/g, '').split(/[^a-zA-Z0-9çÇğĞıİöÖşŞüÜ]+/);
-        const valid = new Set<string>();
-        for (const w of words) {
-            if (w.length > 2 && !stopWords.has(w.toLowerCase())) {
-                const isNumber = /^\d+$/.test(w);
-                const isCapitalized = w[0] === w[0].toUpperCase() && w[0] !== w[0].toLowerCase();
-                if (isNumber || isCapitalized) {
-                    valid.add(w.toLowerCase());
-                }
-            }
-        }
-        return valid;
-    };
-
-    const wordsA = getProperNounsAndNumbers(textA);
-    const wordsB = getProperNounsAndNumbers(textB);
-
-    for (const w of wordsA) {
-        if (wordsB.has(w)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 function dedupeByUrl<T extends SubtitleCandidate>(subList: T[]): Array<{ sub: T; originalIndex: number }> {
