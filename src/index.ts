@@ -915,7 +915,7 @@ function getManifest(addonName: string): Manifest {
 function toStremioSafeConfig(config?: Manifest['config']): Manifest['config'] {
     if (!config) return config;
     return config.map(item => {
-        const { description, section, link, ...rest } = item as any;
+        const { description, section, link, min, max, step, ...rest } = item as any;
         const safe: any = { ...rest };
         if (safe.type === 'multiselect') {
             safe.type = 'text';

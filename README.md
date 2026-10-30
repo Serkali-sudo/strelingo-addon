@@ -57,7 +57,7 @@ Extra subtitle sources you can enable on the addon install page. They live in a 
 *   Configurable via Stremio addon settings for:
     *   Main Language (Audio Language)
     *   Translation Language (Your Language)
-    *   Optional ASS output with separate colors, fonts and regular/bold/italic/bold italic text styles for both languages
+    *   Optional ASS output with separate colors, fonts, sizes and regular/bold/italic/bold italic text styles for both languages, plus a shared distance from the bottom (0–80%) to move the pair vertically
     *   Optional provider API keys (Wyzie, SubSource), Wyzie source selection, and fallback/parallel provider mode
 
 ## Requirements
@@ -116,7 +116,7 @@ The addon will be available at `http://localhost:7000/manifest.json`.
     *   Select your desired **Main Language** (typically the language the audio is in).
     *   Select your desired **Translation Language** (typically your native language or the one you want for comparison).
     *   **Note:** The Translation Language field is automatically pre-filled with your browser's language if not previously configured!
-    *   *(Optional)* Expand **"Subtitle Appearance"**, choose **ASS (styled subtitles)**, and set colors, fonts and text styles for each language. Leave **SRT** selected for the existing output. Reinstall with the updated configuration to apply changes.
+    *   *(Optional)* Expand **"Subtitle Appearance"**, choose **ASS (styled subtitles)**, and set colors, fonts, sizes and text styles for each language. Set **"Distance from bottom (%)"** to move both lines up or down together. These controls appear only when ASS is selected. Leave **SRT** selected for the existing output. Reinstall with the updated configuration to apply changes.
     *   *(Optional)* Expand the **"Optional Providers"** section to add Wyzie / SubSource API keys, pick which Wyzie sources to query, and set the provider mode. Leave it collapsed/empty to use only the default sources.
 4.  Click the "Install Addon" button or link displayed on the page (it might be at the bottom).
 5.  Your browser might ask for permission to open the link with Stremio. Allow it.

@@ -13,6 +13,9 @@ export interface SubtitleOutputOptions {
     transFont: string;
     mainTextStyle: TextStyle;
     transTextStyle: TextStyle;
+    mainFontSize: number;
+    transFontSize: number;
+    verticalPosition: number;
 }
 
 export const subtitleOutputConfig: NonNullable<Manifest['config']> = [
@@ -20,10 +23,15 @@ export const subtitleOutputConfig: NonNullable<Manifest['config']> = [
         key: 'subtitleFormat', type: 'select', title: 'Subtitle format',
         section: 'Subtitle Appearance (optional)', default: 'srt',
         options: [{ value: 'srt', label: 'SRT (default)' }, { value: 'ass', label: 'ASS (styled subtitles)' }],
-        description: 'Choose ASS to apply the colors, fonts and text styles below. Requires a player with ASS styling support; player overrides may still apply. SRT keeps the existing appearance.'
+        description: 'Choose ASS to customize colors, fonts, text styles, sizes and vertical position. Requires a player with ASS styling support; player overrides may still apply. SRT keeps the existing appearance.'
     },
     { key: 'mainColor', type: 'color', title: 'Main language color', default: '#FFFFFF' },
     { key: 'mainFont', type: 'select', title: 'Main language font', options: FONTS, default: 'Arial' },
+    {
+        key: 'mainFontSize', type: 'number', title: 'Main language font size', default: '48',
+        min: 16, max: 144, step: 1,
+        description: '16–144 (default 48). Scales with the video size.'
+    },
     {
         key: 'mainTextStyle', type: 'select', title: 'Main language text style', default: 'bold',
         options: TEXT_STYLES.map(value => ({ value, label: value === 'bold-italic' ? 'Bold italic' : value[0].toUpperCase() + value.slice(1) }))
@@ -34,13 +42,23 @@ export const subtitleOutputConfig: NonNullable<Manifest['config']> = [
         description: 'Fonts must be available on the playback device; otherwise the player selects a fallback.'
     },
     {
+        key: 'transFontSize', type: 'number', title: 'Translation language font size', default: '48',
+        min: 16, max: 144, step: 1,
+        description: '16–144 (default 48). Scales with the video size.'
+    },
+    {
         key: 'transTextStyle', type: 'select', title: 'Translation language text style', default: 'italic',
         options: TEXT_STYLES.map(value => ({ value, label: value === 'bold-italic' ? 'Bold italic' : value[0].toUpperCase() + value.slice(1) }))
+    },
+    {
+        key: 'verticalPosition', type: 'number', title: 'Distance from bottom (%)', default: '4',
+        min: 0, max: 80, step: 1,
+        description: 'Moves both languages together. 0–80% (default 4%). Higher values move subtitles up.'
     }
 ];
 
 // Normalize both URL configuration and signed lazy payloads. Only fixed font and
-// style choices and RGB colors can reach ASS headers or storage filenames.
+// style choices, RGB colors and bounded numbers can reach ASS headers or filenames.
 export function getSubtitleOutputOptions(config: any = {}): SubtitleOutputOptions {
     const color = (value: unknown, fallback: string): string =>
         typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : fallback;
@@ -48,6 +66,11 @@ export function getSubtitleOutputOptions(config: any = {}): SubtitleOutputOption
         typeof value === 'string' && FONTS.includes(value) ? value : 'Arial';
     const style = (value: unknown, fallback: TextStyle): TextStyle =>
         TEXT_STYLES.includes(value as TextStyle) ? value as TextStyle : fallback;
+    const number = (value: unknown, fallback: number, min: number, max: number): number => {
+        if ((typeof value !== 'number' && typeof value !== 'string') || String(value).trim() === '') return fallback;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.round(parsed))) : fallback;
+    };
     return {
         subtitleFormat: config?.subtitleFormat === 'ass' ? 'ass' : 'srt',
         mainColor: color(config?.mainColor, '#FFFFFF'),
@@ -55,7 +78,10 @@ export function getSubtitleOutputOptions(config: any = {}): SubtitleOutputOption
         mainFont: font(config?.mainFont),
         transFont: font(config?.transFont),
         mainTextStyle: style(config?.mainTextStyle, 'bold'),
-        transTextStyle: style(config?.transTextStyle, 'italic')
+        transTextStyle: style(config?.transTextStyle, 'italic'),
+        mainFontSize: number(config?.mainFontSize, 48, 16, 144),
+        transFontSize: number(config?.transFontSize, 48, 16, 144),
+        verticalPosition: number(config?.verticalPosition, 4, 0, 80)
     };
 }
 
@@ -64,8 +90,9 @@ export function subtitleFileExtension(options: SubtitleOutputOptions): string {
     // Preserve all existing SRT names. ASS files vary with every appearance
     // setting; the revision allows future changes to the generated ASS layout.
     const fontKey = (font: string) => font.replace(/ /g, '-');
-    return `_ass1-${options.mainColor.slice(1)}-${fontKey(options.mainFont)}-${options.mainTextStyle}`
-        + `-${options.transColor.slice(1)}-${fontKey(options.transFont)}-${options.transTextStyle}.ass`;
+    return `_ass2-${options.mainColor.slice(1)}-${fontKey(options.mainFont)}-${options.mainTextStyle}-${options.mainFontSize}`
+        + `-${options.transColor.slice(1)}-${fontKey(options.transFont)}-${options.transTextStyle}-${options.transFontSize}`
+        + `-y${options.verticalPosition}.ass`;
 }
 
 export function subtitleContentType(fileName: string): string {
@@ -74,9 +101,10 @@ export function subtitleContentType(fileName: string): string {
 
 export function formatAss(cues: SubtitleCue[], options: SubtitleOutputOptions): string {
     const assColor = (rgb: string): string => `&H00${rgb.slice(5, 7)}${rgb.slice(3, 5)}${rgb.slice(1, 3)}`;
-    const styleLine = (name: string, font: string, color: string, style: TextStyle): string =>
-        `Style: ${name},${font},48,${assColor(color)},&H000000FF,&H00000000,&H80000000,`
-        + `${style.includes('bold') ? -1 : 0},${style.includes('italic') ? -1 : 0},0,0,100,100,0,0,1,2,1,2,40,40,40,1`;
+    const marginV = Math.round(1080 * options.verticalPosition / 100);
+    const styleLine = (name: string, font: string, color: string, style: TextStyle, size: number): string =>
+        `Style: ${name},${font},${size},${assColor(color)},&H000000FF,&H00000000,&H80000000,`
+        + `${style.includes('bold') ? -1 : 0},${style.includes('italic') ? -1 : 0},0,0,100,100,0,0,1,2,1,2,40,40,${marginV},1`;
     const time = (centiseconds: number): string => {
         const h = Math.floor(centiseconds / 360000);
         const m = Math.floor(centiseconds / 6000) % 60;
@@ -91,8 +119,8 @@ export function formatAss(cues: SubtitleCue[], options: SubtitleOutputOptions): 
         '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 1920', 'PlayResY: 1080',
         'WrapStyle: 0', 'ScaledBorderAndShadow: yes', '', '[V4+ Styles]',
         'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-        styleLine('Main', options.mainFont, options.mainColor, options.mainTextStyle),
-        styleLine('Translation', options.transFont, options.transColor, options.transTextStyle),
+        styleLine('Main', options.mainFont, options.mainColor, options.mainTextStyle, options.mainFontSize),
+        styleLine('Translation', options.transFont, options.transColor, options.transTextStyle, options.transFontSize),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
     ];
     for (const cue of cues) {

@@ -819,6 +819,10 @@ export interface Manifest {
         title: string;
         required?: boolean;
         default?: string;
+        /** Number-input limits used only by the configuration page. */
+        min?: number;
+        max?: number;
+        step?: number;
         options?: Array<string | { value: string; label: string }>;
         /** Optional helper text rendered under the field (e.g. usage limits). */
         description?: string;
@@ -864,10 +868,16 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
         let lastSection = '';
         let sectionIdx = 0;
         let collapsibleOpen = false;
+        const assStyleKeys = new Set([
+            'mainColor', 'mainFont', 'mainTextStyle', 'mainFontSize',
+            'transColor', 'transFont', 'transTextStyle', 'transFontSize', 'verticalPosition'
+        ]);
+        const initiallyAss = manifest.config?.find(elem => elem.key === 'subtitleFormat')?.default === 'ass';
         const normalizeOptions = (opts: any): Array<{ value: string; label: string }> =>
             (opts || []).map((o: any) => (typeof o === 'string' ? { value: o, label: o } : o));
         manifest.config?.forEach(elem => {
             const key = elem.key;
+            const assAttributes = assStyleKeys.has(key) ? ` data-ass-only${initiallyAss ? '' : ' hidden'}` : '';
 
             // A `section` starts a collapsible group (collapsed by default). Fields
             // after it with no section of their own stay inside the same group.
@@ -900,13 +910,19 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
                     : elem.default;
                 const defaultHTML = defaultValue ? ` value="${defaultValue}"` : '';
                 const inputType = elem.type;
+                const numberAttributes = inputType === 'number'
+                    ? ['min', 'max', 'step'].map(attr => {
+                        const value = elem[attr as 'min' | 'max' | 'step'];
+                        return value !== undefined ? ` ${attr}="${value}"` : '';
+                    }).join('')
+                    : '';
                 options += `
-                <div class="form-group">
+                <div class="form-group"${assAttributes}>
                     <div class="field-label-row">
                         <label for="${key}">${elem.title}</label>
                         ${linkHTML}
                     </div>
-                    <input type="${inputType}" id="${key}" name="${key}"${defaultHTML}${isRequired}/>
+                    <input type="${inputType}" id="${key}" name="${key}"${defaultHTML}${numberAttributes}${isRequired}/>
                     ${helpHTML}
                 </div>`;
             } else if (elem.type === 'checkbox') {
@@ -930,7 +946,7 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
                 });
                 const autoDetectAttr = elem.browserDetect ? ' data-auto-detect="1"' : '';
                 options += `
-                <div class="form-group">
+                <div class="form-group"${assAttributes}>
                     <label for="${key}">${elem.title}</label>
                     <div class="custom-select-wrapper" data-key="${key}"${autoDetectAttr}>
                         <input type="hidden" id="${key}" name="${key}" value="${defaultValue || ''}">
@@ -1085,6 +1101,15 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
             })();
 
             const updateLink = () => {
+                const useAss = document.getElementById('subtitleFormat')?.value === 'ass'
+                document.querySelectorAll('[data-ass-only]').forEach(field => {
+                    field.hidden = !useAss
+                    // Hidden ASS number limits must not block an SRT install.
+                    // Disabling keeps the current value for switching back.
+                    field.querySelectorAll('input[type="number"]').forEach(input => {
+                        input.disabled = !useAss
+                    })
+                })
                 const config = Object.fromEntries(
                     Array.from(new FormData(mainForm).entries()).filter(([, v]) => String(v).trim() !== '')
                 )
