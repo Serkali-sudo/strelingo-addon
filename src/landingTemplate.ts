@@ -306,7 +306,8 @@ body::after {
 
 .form-group input[type="text"],
 .form-group input[type="number"],
-.form-group input[type="password"] {
+.form-group input[type="password"],
+.form-group input[type="color"] {
     width: 100%;
     padding: 10px 14px;
     font-size: 14px;
@@ -317,6 +318,12 @@ body::after {
     color: var(--text);
     outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-group input[type="color"] {
+    height: 42px;
+    padding: 4px;
+    cursor: pointer;
 }
 
 .form-group input:focus {
@@ -808,7 +815,7 @@ export interface Manifest {
     };
     config?: Array<{
         key: string;
-        type: 'text' | 'number' | 'password' | 'checkbox' | 'select' | 'multiselect';
+        type: 'text' | 'number' | 'password' | 'checkbox' | 'select' | 'multiselect' | 'color';
         title: string;
         required?: boolean;
         default?: string;
@@ -886,9 +893,12 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
                 ? `<a class="get-key-btn" href="${elem.link.url}" target="_blank" rel="noopener noreferrer">${elem.link.label}<svg width="11" height="11" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 3h7v7M13 3L6.5 9.5M11 9.5V13H3V5h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a>`
                 : '';
 
-            if (['text', 'number', 'password'].includes(elem.type)) {
+            if (['text', 'number', 'password', 'color'].includes(elem.type)) {
                 const isRequired = elem.required ? ' required' : '';
-                const defaultHTML = elem.default ? ` value="${elem.default}"` : '';
+                const defaultValue = elem.type === 'color'
+                    ? (/^#[0-9a-f]{6}$/i.test(elem.default || '') ? elem.default : '#FFFFFF')
+                    : elem.default;
+                const defaultHTML = defaultValue ? ` value="${defaultValue}"` : '';
                 const inputType = elem.type;
                 options += `
                 <div class="form-group">

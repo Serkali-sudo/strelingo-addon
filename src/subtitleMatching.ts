@@ -3,6 +3,9 @@ export interface SubtitleCue {
     startTime: string;
     endTime: string;
     text: string;
+    // Retain the language boundary for styled output without changing SRT text.
+    mainText?: string;
+    transText?: string;
 }
 
 export interface SubtitleCandidate {
@@ -373,6 +376,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
             : mainTimed.slice(mi, last + 1).map(cue => cue.text).join(' ');
 
         let mergedText = mainText;
+        let translationText = '';
         if (picked.length > 0) {
             const parts: string[] = [];
             for (const translation of picked) {
@@ -380,7 +384,7 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
                     parts.push(translation.text);
                 }
             }
-            const translationText = parts.join(' ');
+            translationText = parts.join(' ');
             if (translationText) {
                 mergedText = (`<b>${mainText}</b>\n<i>> ${translationText}</i>`).trim();
             }
@@ -388,8 +392,8 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
 
         if (mergedText) {
             mergedSubs.push(last > mi
-                ? { ...mainTimed[mi].cue, endTime: mainTimed[last].cue.endTime, text: mergedText }
-                : { ...mainTimed[mi].cue, text: mergedText });
+                ? { ...mainTimed[mi].cue, endTime: mainTimed[last].cue.endTime, text: mergedText, mainText, transText: translationText }
+                : { ...mainTimed[mi].cue, text: mergedText, mainText, transText: translationText });
         }
         mi = last + 1;
     }
@@ -418,7 +422,9 @@ export function mergeSubtitlesByTime<T extends SubtitleCue>(
                     ...warpedTrans.cue,
                     startTime: formatMsToSrtTime(warpedTrans.startMs),
                     endTime: formatMsToSrtTime(warpedTrans.endMs),
-                    text: `<i>> ${text}</i>`
+                    text: `<i>> ${text}</i>`,
+                    mainText: '',
+                    transText: text
                 });
             }
         }

@@ -51,19 +51,20 @@ Extra subtitle sources you can enable on the addon install page. They live in a 
 *   Automatically detects the best available subtitles for two selected languages.
 *   Handles multiple subtitle formats (SRT, ASS/SSA, VTT, SUB, SBV, SMI, LRC, TTML) and auto-extracts ZIP-archived downloads from providers.
 *   **Robust encoding detection:** Handles UTF-16 LE/BE (with BOM), double-encoded BOMs, legacy encodings (Windows-1251, ISO-8859-x), and repairs double-encoded UTF-8 text (Implemented by @ravisorg).
-*   Merges the main language and translation language subtitles into a single `.srt` file.
-*   Formats the translation line to be *italic* and <font color="yellow">yellow</font> (yellow color doesnt work due to stremio overriding the color of subtitles).
+*   Merges the main language and translation language subtitles into a single `.srt` file by default, with optional styled `.ass` output.
+*   SRT keeps the existing bold main line and italic translation line. ASS lets you set each language's color, font and text style separately (default: white bold main text and yellow italic translation). ASS styling requires a compatible player and can still be affected by player overrides. Fonts depend on availability on the playback device.
 *   **Auto-detects your browser language** and sets it as the default translation language on first use!
 *   Configurable via Stremio addon settings for:
     *   Main Language (Audio Language)
     *   Translation Language (Your Language)
+    *   Optional ASS output with separate colors, fonts and regular/bold/italic/bold italic text styles for both languages
     *   Optional provider API keys (Wyzie, SubSource), Wyzie source selection, and fallback/parallel provider mode
 
 ## Requirements
 
 *   [Node.js](https://nodejs.org/) (Version 18 or higher)
 *   [npm](https://www.npmjs.com/)
-*   Storage modes reuse existing generated subtitles when the same movie/episode, language pair, and version filename already exists.
+*   Storage modes reuse existing generated subtitles when the same movie/episode, language pair, and version filename already exists. ASS filenames also include the appearance settings so changing styles produces a separate file. Both formats work with direct serving, lazy storage generation, Vercel Blob, S3-compatible storage and local storage.
 *   **Storage / Serving Configuration** - Configure your choice via the `.env` file (see [`.env.example`](.env.example) for all options):
     *   **Option 1: Vercel Blob** (cloud) - Create a Vercel Blob in [Vercel Dashboard](https://vercel.com/dashboard/stores), copy the token, and put it in your `.env` as `BLOB_READ_WRITE_TOKEN`
     *   **Option 2: S3-Compatible Storage** (cloud / self-hosted) - Configure `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `S3_PUBLIC_BASE_URL`. Works with AWS S3, Cloudflare R2, Supabase Storage S3, Backblaze B2, DigitalOcean Spaces, Wasabi, MinIO, and similar providers.
@@ -115,6 +116,7 @@ The addon will be available at `http://localhost:7000/manifest.json`.
     *   Select your desired **Main Language** (typically the language the audio is in).
     *   Select your desired **Translation Language** (typically your native language or the one you want for comparison).
     *   **Note:** The Translation Language field is automatically pre-filled with your browser's language if not previously configured!
+    *   *(Optional)* Expand **"Subtitle Appearance"**, choose **ASS (styled subtitles)**, and set colors, fonts and text styles for each language. Leave **SRT** selected for the existing output. Reinstall with the updated configuration to apply changes.
     *   *(Optional)* Expand the **"Optional Providers"** section to add Wyzie / SubSource API keys, pick which Wyzie sources to query, and set the provider mode. Leave it collapsed/empty to use only the default sources.
 4.  Click the "Install Addon" button or link displayed on the page (it might be at the bottom).
 5.  Your browser might ask for permission to open the link with Stremio. Allow it.
