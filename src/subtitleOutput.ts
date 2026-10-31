@@ -23,7 +23,7 @@ export const subtitleOutputConfig: NonNullable<Manifest['config']> = [
         key: 'subtitleFormat', type: 'select', title: 'Subtitle format',
         section: 'Subtitle Appearance (optional)', default: 'srt',
         options: [{ value: 'srt', label: 'SRT (default)' }, { value: 'ass', label: 'ASS (styled subtitles)' }],
-        description: 'Choose ASS to customize colors, fonts, text styles, sizes and vertical position. Requires a player with ASS styling support; player overrides may still apply. SRT keeps the existing appearance.'
+        description: 'Choose ASS to customize colors, fonts, text styles, sizes and vertical position. Enable "Style ASS subtitles" in Stremio or ASS styling in your player. SRT keeps the existing appearance.'
     },
     { key: 'mainColor', type: 'color', title: 'Main language color', default: '#FFFFFF' },
     { key: 'mainFont', type: 'select', title: 'Main language font', options: FONTS, default: 'Arial' },
