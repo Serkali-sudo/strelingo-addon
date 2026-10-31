@@ -90,7 +90,7 @@ export function subtitleFileExtension(options: SubtitleOutputOptions): string {
     // Preserve all existing SRT names. ASS files vary with every appearance
     // setting; the revision allows future changes to the generated ASS layout.
     const fontKey = (font: string) => font.replace(/ /g, '-');
-    return `_ass2-${options.mainColor.slice(1)}-${fontKey(options.mainFont)}-${options.mainTextStyle}-${options.mainFontSize}`
+    return `_ass3-${options.mainColor.slice(1)}-${fontKey(options.mainFont)}-${options.mainTextStyle}-${options.mainFontSize}`
         + `-${options.transColor.slice(1)}-${fontKey(options.transFont)}-${options.transTextStyle}-${options.transFontSize}`
         + `-y${options.verticalPosition}.ass`;
 }
@@ -123,6 +123,7 @@ export function formatAss(cues: SubtitleCue[], options: SubtitleOutputOptions): 
         styleLine('Translation', options.transFont, options.transColor, options.transTextStyle, options.transFontSize),
         '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'
     ];
+    const events: Array<{ start: number; end: number; main: string[]; translation: string[] }> = [];
     for (const cue of cues) {
         const startMs = parseSrtTimeToMs(cue.startTime);
         const endMs = parseSrtTimeToMs(cue.endTime);
@@ -130,10 +131,44 @@ export function formatAss(cues: SubtitleCue[], options: SubtitleOutputOptions): 
         const main = text(cue.mainText || '');
         const translation = text(cue.transText || '');
         if (!main && !translation) continue;
-        const start = Math.floor(startMs / 10);
+        // Use the same rounding for both boundaries so touching cues stay
+        // touching when milliseconds are reduced to ASS centiseconds.
+        const start = Math.round(startMs / 10);
         const end = Math.max(start + 1, Math.round(endMs / 10));
+        events.push({ start, end, main: main ? [main] : [], translation: translation ? [translation] : [] });
+    }
+    events.sort((a, b) => a.start - b.start);
+
+    // Multiple cues may share a start (including after rounding). Keep their
+    // text in one event, rather than clipping one of them to zero duration.
+    const grouped: typeof events = [];
+    for (const event of events) {
+        const previous = grouped[grouped.length - 1];
+        if (previous && previous.start === event.start) {
+            previous.end = Math.max(previous.end, event.end);
+            for (const part of event.main) {
+                if (!previous.main.includes(part)) previous.main.push(part);
+            }
+            for (const part of event.translation) {
+                if (!previous.translation.includes(part)) previous.translation.push(part);
+            }
+        } else {
+            grouped.push(event);
+        }
+    }
+
+    // Explicit positioning stops ASS renderers from retaining an upward
+    // collision offset. Clip overlaps too, so cues replace each other instead
+    // of being drawn on top of one another at the fixed position.
+    const position = `{\\an2\\pos(960,${1080 - marginV})}`;
+    for (let i = 0; i < grouped.length; i++) {
+        const event = grouped[i];
+        const next = grouped[i + 1];
+        const end = next ? Math.min(event.end, next.start) : event.end;
+        const main = event.main.join('\\N');
+        const translation = event.translation.join('\\N');
         const content = main && translation ? `${main}\\N{\\rTranslation}${translation}` : main || translation;
-        lines.push(`Dialogue: 0,${time(start)},${time(end)},${main ? 'Main' : 'Translation'},,0,0,0,,${content}`);
+        lines.push(`Dialogue: 0,${time(event.start)},${time(end)},${main ? 'Main' : 'Translation'},,0,0,0,,${position}${content}`);
     }
     return lines.join('\n') + '\n';
 }
