@@ -846,7 +846,17 @@ interface LandingTemplateOptions {
     browserLangMap?: Record<string, string>;
 }
 
+function escapeHtml(value: unknown): string {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 export default function landingTemplate(manifest: Manifest, opts: LandingTemplateOptions = {}): string {
+    const escapedName = escapeHtml(manifest.name);
     const background = manifest.background || 'https://dl.strem.io/addon-background.jpg';
     const logo = manifest.logo || 'https://dl.strem.io/addon-logo.png';
     const githubUrl = manifest.githubUrl || '';
@@ -870,7 +880,7 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
         let collapsibleOpen = false;
         const assStyleKeys = new Set([
             'mainColor', 'mainFont', 'mainTextStyle', 'mainFontSize',
-            'transColor', 'transFont', 'transTextStyle', 'transFontSize', 'verticalPosition'
+            'transColor', 'transFont', 'transTextStyle', 'transFontSize', 'verticalPosition', 'assAnimation'
         ]);
         const initiallyAss = manifest.config?.find(elem => elem.key === 'subtitleFormat')?.default === 'ass';
         const normalizeOptions = (opts: any): Array<{ value: string; label: string }> =>
@@ -908,7 +918,7 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
                 const defaultValue = elem.type === 'color'
                     ? (/^#[0-9a-f]{6}$/i.test(elem.default || '') ? elem.default : '#FFFFFF')
                     : elem.default;
-                const defaultHTML = defaultValue ? ` value="${defaultValue}"` : '';
+                const defaultHTML = defaultValue ? ` value="${escapeHtml(defaultValue)}"` : '';
                 const inputType = elem.type;
                 const numberAttributes = inputType === 'number'
                     ? ['min', 'max', 'step'].map(attr => {
@@ -942,16 +952,16 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
                 let optionsHTML = '';
                 selections.forEach((el: any) => {
                     const isSelected = el.value === defaultValue;
-                    optionsHTML += `<div class="custom-option${isSelected ? ' selected' : ''}" data-value="${el.value}"><span class="option-label">${el.label}</span></div>`;
+                    optionsHTML += `<div class="custom-option${isSelected ? ' selected' : ''}" data-value="${escapeHtml(el.value)}"><span class="option-label">${escapeHtml(el.label)}</span></div>`;
                 });
                 const autoDetectAttr = elem.browserDetect ? ' data-auto-detect="1"' : '';
                 options += `
                 <div class="form-group"${assAttributes}>
                     <label for="${key}">${elem.title}</label>
                     <div class="custom-select-wrapper" data-key="${key}"${autoDetectAttr}>
-                        <input type="hidden" id="${key}" name="${key}" value="${defaultValue || ''}">
+                        <input type="hidden" id="${key}" name="${key}" value="${escapeHtml(defaultValue || '')}">
                         <div class="custom-select-trigger" tabindex="0">
-                            <span class="select-value">${defaultLabel || 'Select...'}</span>
+                            <span class="select-value">${escapeHtml(defaultLabel || 'Select...')}</span>
                             <span class="select-arrow"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
                         </div>
                         <div class="custom-select-options">
@@ -966,13 +976,13 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
                 let chipsHTML = '';
                 selections.forEach((el: any) => {
                     const isChecked = selectedSet.has(el.value) ? ' checked' : '';
-                    chipsHTML += `<label class="ms-chip"><input type="checkbox" value="${el.value}"${isChecked}/><span>${el.label}</span></label>`;
+                    chipsHTML += `<label class="ms-chip"><input type="checkbox" value="${escapeHtml(el.value)}"${isChecked}/><span>${escapeHtml(el.label)}</span></label>`;
                 });
                 options += `
                 <div class="form-group">
                     <label>${elem.title}</label>
                     <div class="multiselect" data-key="${key}">
-                        <input type="hidden" id="${key}" name="${key}" value="${[...selectedSet].join(',')}">
+                        <input type="hidden" id="${key}" name="${key}" value="${escapeHtml([...selectedSet].join(','))}">
                         <div class="ms-options">${chipsHTML}</div>
                     </div>
                     ${helpHTML}
@@ -1220,7 +1230,7 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${manifest.name} - Stremio Addon</title>
+    <title>${escapedName} - Stremio Addon</title>
     <link rel="shortcut icon" href="${logo}" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>${STYLESHEET}</style>
@@ -1230,9 +1240,9 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
     <div class="card">
         ${githubIcon}
         <span class="badge">v${manifest.version || '0.0.0'}</span>
-        <div class="logo-wrap"><img src="${logo}" alt="${manifest.name}"></div>
+        <div class="logo-wrap"><img src="${logo}" alt="${escapedName}"></div>
         <div class="header-row">
-            <h1 class="title">${manifest.name}</h1>
+            <h1 class="title">${escapedName}</h1>
         </div>
         <div id="langLabel" class="lang-label"></div>
         <p class="description">${descHtml}</p>
