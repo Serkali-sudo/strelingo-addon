@@ -1,6 +1,5 @@
 import type { Manifest } from './landingTemplate';
 import { parseSrtTimeToMs, type SubtitleCue } from './subtitleMatching';
-import { animateAssText, assFadeTags, getAssAnimation, type AssAnimation } from './subtitleAnimations';
 
 const FONTS = ['Arial', 'Verdana', 'Tahoma', 'Times New Roman', 'Courier New', 'Noto Sans'];
 const TEXT_STYLES = ['regular', 'bold', 'italic', 'bold-italic'] as const;
@@ -17,7 +16,6 @@ export interface SubtitleOutputOptions {
     mainFontSize: number;
     transFontSize: number;
     verticalPosition: number;
-    assAnimation: AssAnimation;
 }
 
 export const subtitleOutputConfig: NonNullable<Manifest['config']> = [
@@ -56,17 +54,6 @@ export const subtitleOutputConfig: NonNullable<Manifest['config']> = [
         key: 'verticalPosition', type: 'number', title: 'Distance from bottom (%)', default: '4',
         min: 0, max: 80, step: 1,
         description: 'Moves both languages together. 0–80% (default 4%). Higher values move subtitles up.'
-    },
-    {
-        key: 'assAnimation', type: 'select', title: 'Animation (both languages)', default: 'none',
-        options: [
-            { value: 'none', label: 'None (default)' },
-            { value: 'fade', label: 'Fade in / out' },
-            { value: 'pop', label: 'Pop-in' },
-            { value: 'character-pop', label: 'Character pop-in' },
-            { value: 'glow-wave', label: 'Character glow wave' }
-        ],
-        description: 'Off by default. Requires ASS effects support; character effects are heavier. Character effects simplify for short cues, long text or complex scripts.'
     }
 ];
 
@@ -94,8 +81,7 @@ export function getSubtitleOutputOptions(config: any = {}): SubtitleOutputOption
         transTextStyle: style(config?.transTextStyle, 'italic'),
         mainFontSize: number(config?.mainFontSize, 48, 16, 144),
         transFontSize: number(config?.transFontSize, 48, 16, 144),
-        verticalPosition: number(config?.verticalPosition, 4, 0, 80),
-        assAnimation: getAssAnimation(config?.assAnimation)
+        verticalPosition: number(config?.verticalPosition, 4, 0, 80)
     };
 }
 
@@ -104,11 +90,9 @@ export function subtitleFileExtension(options: SubtitleOutputOptions): string {
     // Preserve all existing SRT names. ASS files vary with every appearance
     // setting; the revision allows future changes to the generated ASS layout.
     const fontKey = (font: string) => font.replace(/ /g, '-');
-    // Keep existing static ASS filenames; only animated variants get a suffix.
-    const animation = options.assAnimation === 'none' ? '' : `-fx1-${options.assAnimation}`;
     return `_ass3-${options.mainColor.slice(1)}-${fontKey(options.mainFont)}-${options.mainTextStyle}-${options.mainFontSize}`
         + `-${options.transColor.slice(1)}-${fontKey(options.transFont)}-${options.transTextStyle}-${options.transFontSize}`
-        + `-y${options.verticalPosition}${animation}.ass`;
+        + `-y${options.verticalPosition}.ass`;
 }
 
 export function subtitleContentType(fileName: string): string {
@@ -181,13 +165,10 @@ export function formatAss(cues: SubtitleCue[], options: SubtitleOutputOptions): 
         const event = grouped[i];
         const next = grouped[i + 1];
         const end = next ? Math.min(event.end, next.start) : event.end;
-        const durationMs = (end - event.start) * 10;
-        const main = animateAssText(event.main.join('\\N'), options.assAnimation, durationMs, options.mainColor);
-        // Style resets cancel transforms, so decorate each language separately.
-        const translation = animateAssText(event.translation.join('\\N'), options.assAnimation, durationMs, options.transColor);
+        const main = event.main.join('\\N');
+        const translation = event.translation.join('\\N');
         const content = main && translation ? `${main}\\N{\\rTranslation}${translation}` : main || translation;
-        const fade = assFadeTags(options.assAnimation, durationMs);
-        lines.push(`Dialogue: 0,${time(event.start)},${time(end)},${main ? 'Main' : 'Translation'},,0,0,0,,${position}${fade}${content}`);
+        lines.push(`Dialogue: 0,${time(event.start)},${time(end)},${main ? 'Main' : 'Translation'},,0,0,0,,${position}${content}`);
     }
     return lines.join('\n') + '\n';
 }

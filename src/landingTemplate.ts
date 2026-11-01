@@ -880,7 +880,7 @@ export default function landingTemplate(manifest: Manifest, opts: LandingTemplat
         let collapsibleOpen = false;
         const assStyleKeys = new Set([
             'mainColor', 'mainFont', 'mainTextStyle', 'mainFontSize',
-            'transColor', 'transFont', 'transTextStyle', 'transFontSize', 'verticalPosition', 'assAnimation'
+            'transColor', 'transFont', 'transTextStyle', 'transFontSize', 'verticalPosition'
         ]);
         const initiallyAss = manifest.config?.find(elem => elem.key === 'subtitleFormat')?.default === 'ass';
         const normalizeOptions = (opts: any): Array<{ value: string; label: string }> =>

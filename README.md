@@ -53,7 +53,6 @@ Extra subtitle sources you can enable on the addon install page. They live in a 
 *   **Robust encoding detection:** Handles UTF-16 LE/BE (with BOM), double-encoded BOMs, legacy encodings (Windows-1251, ISO-8859-x), and repairs double-encoded UTF-8 text (Implemented by @ravisorg).
 *   Merges the main language and translation language subtitles into a single `.srt` file by default, with optional styled `.ass` output.
 *   ASS output anchors each subtitle pair at the configured position and ends overlapping cues when the next pair starts, preventing rapid dialogue from stacking upward. Cues with the same start are combined into one display event.
-*   Optional ASS animations: Fade in/out, Pop-in, Character pop-in and Character glow wave. **None is the default**, including for existing installs. Effects apply to both languages and require a compatible ASS renderer. Short cues use simpler effects; long or complex-script text uses a whole-line pop instead of character effects.
 *   SRT keeps the existing bold main line and italic translation line. ASS lets you set each language's color, font and text style separately (default: white bold main text and yellow italic translation). ASS styling requires a compatible player and can still be affected by player overrides. Fonts depend on availability on the playback device.
 *   **Auto-detects your browser language** and sets it as the default translation language on first use!
 *   Configurable via Stremio addon settings for:
